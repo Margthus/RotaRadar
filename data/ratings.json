@@ -1,0 +1,24 @@
+{
+  "izmir": {
+    "kordon": {
+      "scoreTotal": 265,
+      "votes": 87
+    }
+  },
+  "ankara": {
+    "kizilay": {
+      "scoreTotal": 430,
+      "votes": 430
+    }
+  },
+  "istanbul": {
+    "beylerbeyi": {
+      "scoreTotal": 9,
+      "votes": 2
+    },
+    "karabayir": {
+      "scoreTotal": 4,
+      "votes": 3
+    }
+  }
+}

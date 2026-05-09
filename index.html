@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RotaRadar Demo</title>
+    <link rel="preconnect" href="https://unpkg.com" />
+    <link rel="preconnect" href="https://tile.openstreetmap.org" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIINfQJbMIAUIxqZfz7F/9Yvjo3wBMVjACw="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="./styles.css?v=17" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero" id="home-screen">
+        <div class="brand-row">
+          <div class="logo-mark" aria-hidden="true"><span></span></div>
+          <p>RotaRadar</p>
+        </div>
+
+        <div class="hero-content">
+          <p class="eyebrow">Güvenli rota ve çevre keşfi</p>
+          <h1>Hoş geldin</h1>
+          <p class="intro">
+            Gideceğin yeri yaz, çevredeki turistik alanları, parkları, kafeleri ve yürüyüş
+            rotalarını güvenlik seviyeleriyle birlikte gör.
+          </p>
+
+          <form class="search-card" id="search-form">
+            <label for="destination">Gitmek istediğin yer</label>
+            <div class="search-row">
+              <select id="destination" name="destination" required>
+                <option value="" selected disabled>Şehir seç</option>
+                <option value="izmir">İzmir</option>
+                <option value="ankara">Ankara</option>
+                <option value="istanbul">İstanbul</option>
+              </select>
+              <button type="submit" aria-label="Haritada göster">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M5 12h12.2l-4.6-4.6L14 6l7 7-7 7-1.4-1.4 4.6-4.6H5z" />
+                </svg>
+              </button>
+            </div>
+            <p class="helper" id="search-helper">Demo şehirleri: İzmir, Ankara, İstanbul</p>
+          </form>
+
+          <div class="quick-actions">
+            <button type="button" id="open-chat">Foruma git</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="chat-screen is-hidden" id="chat-screen">
+        <header class="chat-header">
+          <button type="button" class="icon-button" id="chat-back" aria-label="Ana sayfaya dön">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 11H7.8l4.6-4.6L11 5l-7 7 7 7 1.4-1.4L7.8 13H20z" />
+            </svg>
+          </button>
+          <div>
+            <p>RotaRadar</p>
+            <h2>Şehir Sohbeti</h2>
+          </div>
+        </header>
+
+        <div class="chat-city-row">
+          <select id="chat-city">
+            <option value="izmir">İzmir</option>
+            <option value="ankara">Ankara</option>
+            <option value="istanbul">İstanbul</option>
+          </select>
+        </div>
+
+        <section class="forum-card" id="forum-card">
+          <div class="forum-head">
+            <h3>Şehir Forumu</h3>
+            <span id="forum-city-label">İstanbul</span>
+          </div>
+          <form class="forum-topic-form" id="forum-topic-form">
+            <input type="text" id="forum-author" placeholder="İsmin" maxlength="24" required />
+            <input type="text" id="forum-title" placeholder="Konu başlığı" maxlength="80" required />
+            <textarea id="forum-message" placeholder="İlk mesajı yaz" maxlength="240" rows="2" required></textarea>
+            <button type="submit">Konu aç</button>
+          </form>
+          <div class="forum-list" id="forum-list"></div>
+        </section>
+      </section>
+
+      <section class="map-screen is-hidden" id="map-screen" aria-live="polite">
+        <div id="map" class="map"></div>
+
+        <header class="map-header">
+          <button type="button" class="icon-button" id="back-button" aria-label="Girişe dön">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M20 11H7.8l4.6-4.6L11 5l-7 7 7 7 1.4-1.4L7.8 13H20z" />
+            </svg>
+          </button>
+          <div>
+            <p>RotaRadar</p>
+            <h2 id="city-title">İzmir</h2>
+          </div>
+          <div class="map-header-actions">
+            <button type="button" class="emergency-button" aria-label="Acil durum">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 2l7 3v5c0 5.3-3.4 9.9-7 12-3.6-2.1-7-6.7-7-12V5l7-3Zm0 4.2L8 7.9V10c0 3.6 2.2 6.9 4 8.3 1.8-1.4 4-4.7 4-8.3V7.9l-4-1.7Zm-.9 2.8h1.8v1.8h1.8v1.8h-1.8v1.8h-1.8v-1.8H9.3v-1.8h1.8V9Z" />
+              </svg>
+            </button>
+            <button type="button" class="icon-button" id="locate-button" aria-label="Şehre odaklan">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm8.9 3A9 9 0 0 0 13 3.1V1h-2v2.1A9 9 0 0 0 3.1 11H1v2h2.1A9 9 0 0 0 11 20.9V23h2v-2.1A9 9 0 0 0 20.9 13H23v-2h-2.1ZM12 19a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z" />
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <div class="emergency-overlay is-hidden" id="emergency-overlay">
+          <div class="emergency-modal" role="dialog" aria-modal="true" aria-labelledby="emergency-title">
+            <button type="button" class="emergency-close" id="emergency-close" aria-label="Kapat">×</button>
+            <h3 id="emergency-title">Acil Durum</h3>
+            <p>Seçenek seç:</p>
+            <div class="emergency-options">
+              <button type="button" class="emergency-option" data-emergency="polis">Polis</button>
+              <button type="button" class="emergency-option" data-emergency="ambulans">Ambulans</button>
+            </div>
+            <p class="emergency-feedback" id="emergency-feedback"></p>
+          </div>
+        </div>
+
+        <div class="route-overlay is-hidden" id="route-overlay">
+          <div class="route-modal" role="dialog" aria-modal="true" aria-labelledby="route-title">
+            <button type="button" class="route-close" id="route-close" aria-label="Kapat">×</button>
+            <h3 id="route-title">Nasıl giderim?</h3>
+            <p>Rota modu seç:</p>
+            <select id="route-mode">
+              <option value="safe">En güvenli rota • 🚶 22dk • 🚌 14dk • 🚗 8dk</option>
+              <option value="crowded">En kalabalık rota • 🚶 19dk • 🚌 12dk • 🚗 7dk</option>
+              <option value="calm">En sakin rota • 🚶 24dk • 🚌 15dk • 🚗 9dk</option>
+              <option value="student">Öğrenci modu • 🚶 21dk • 🚌 11dk • 🚗 8dk</option>
+            </select>
+            <button type="button" id="route-generate">Rota oluştur</button>
+            <p class="route-feedback" id="route-feedback"></p>
+          </div>
+        </div>
+
+        <aside class="bottom-panel">
+          <div class="handle" aria-hidden="true"></div>
+          <div class="panel-toggle-row">
+            <button type="button" class="panel-toggle" id="panel-toggle" aria-expanded="true">Detay gizle</button>
+          </div>
+          <div class="panel-summary">
+            <div>
+              <p>Seçili bölge</p>
+              <h3 id="area-name">Bölge seç</h3>
+            </div>
+            <span class="risk-pill is-neutral" id="risk-pill">Haritadan seç</span>
+          </div>
+          <div class="area-media"><img id="area-image" alt="Secili bolge gorseli" /></div>
+          <p class="area-description" id="area-description"></p>
+          <div class="stats-grid">
+            <div><span id="area-score">-</span><p>Güven puanı</p></div>
+            <div><span id="area-votes">-</span><p>Kullanıcı oyu</p></div>
+            <div><span id="area-type">-</span><p>Bölge türü</p></div>
+          </div>
+          <div class="rating-box">
+            <p>Demo puanı ver</p>
+            <div class="rating-buttons" id="rating-buttons" aria-label="Güvenlik puanı ver">
+              <button type="button" data-rating="1">1</button>
+              <button type="button" data-rating="2">2</button>
+              <button type="button" data-rating="3">3</button>
+              <button type="button" data-rating="4">4</button>
+              <button type="button" data-rating="5">5</button>
+            </div>
+          </div>
+          <div class="comment-box">
+            <textarea id="comment-input" rows="2" maxlength="240" placeholder="Yorumunu yaz"></textarea>
+            <button type="button" id="comment-submit">Gonder</button>
+          </div>
+          <div class="comments-list" id="comments-list"></div>
+          <div class="route-box">
+            <button type="button" id="route-button">Nasıl giderim</button>
+          </div>
+        </aside>
+      </section>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="./script.js?v=30"></script>
+  </body>
+</html>
