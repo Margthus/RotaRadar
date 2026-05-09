@@ -1214,50 +1214,36 @@ async function loadCityRatings(cityKey) {
       cache: "no-store",
     });
 
-    if (!response.ok) return;
+    if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
+      throw new Error("Ratings API unavailable");
+    }
 
     const ratings = await response.json();
-    const city = cityData[cityKey];
-
-    city.areas.forEach((area) => {
-      const base = baseScores.get(getAreaKey(cityKey, area.id));
-      const serverRating = ratings[area.id];
-
-      if (!base) return;
-
-      if (serverRating?.votes > 0) {
-        const totalVotes = base.votes + serverRating.votes;
-        area.score = (base.score * base.votes + serverRating.scoreTotal) / totalVotes;
-        area.votes = totalVotes;
-        area.comments =
-          Array.isArray(serverRating.comments) && serverRating.comments.length > 0
-            ? serverRating.comments
-            : getDemoCommentsForArea(area);
-      } else {
-        area.score = base.score;
-        area.votes = base.votes;
-        area.comments = getDemoCommentsForArea(area);
-      }
-    });
+    applyCityRatings(cityKey, ratings);
   } catch {
-    // Static fallback: keep built-in demo scores if the API is unavailable.
+    applyCityRatings(cityKey, getStoredRatings(cityKey));
   }
 }
 
 async function submitAreaRating(cityKey, areaId, rating, comment) {
-  const response = await fetch("/api/rate", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ city: cityKey, areaId, rating, comment }),
-  });
+  try {
+    const response = await fetch("/api/ratings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ city: cityKey, areaId, rating, comment }),
+    });
 
-  if (!response.ok) {
-    throw new Error("Puan gönderilemedi");
+    if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
+      throw new Error("Puan gönderilemedi");
+    }
+
+    const result = await response.json();
+    return storeLocalRating(cityKey, areaId, rating, comment, result);
+  } catch {
+    return storeLocalRating(cityKey, areaId, rating, comment);
   }
-
-  return response.json();
 }
 
 function escapeHtml(text) {
@@ -1279,43 +1265,55 @@ function formatForumTime(timestamp) {
 }
 
 async function fetchForum(cityKey) {
-  const response = await fetch(`/api/forum?city=${encodeURIComponent(cityKey)}`, {
-    cache: "no-store",
-  });
+  try {
+    const response = await fetch(`/api/forum?city=${encodeURIComponent(cityKey)}`, {
+      cache: "no-store",
+    });
 
-  if (!response.ok) {
-    throw new Error("Forum yuklenemedi");
+    if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
+      throw new Error("Forum yuklenemedi");
+    }
+
+    return mergeForumTopics(await response.json(), getStoredForum(cityKey));
+  } catch {
+    return getStoredForum(cityKey);
   }
-
-  return response.json();
 }
 
 async function createForumTopic(payload) {
-  const response = await fetch("/api/forum/topic", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  try {
+    const response = await fetch("/api/forum", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
 
-  if (!response.ok) {
-    throw new Error("Konu olusturulamadi");
+    if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
+      throw new Error("Konu olusturulamadi");
+    }
+
+    return storeLocalForumTopic(payload.city, await response.json());
+  } catch {
+    return storeLocalForumTopic(payload.city, buildLocalForumTopic(payload));
   }
-
-  return response.json();
 }
 
 async function createForumReply(payload) {
-  const response = await fetch("/api/forum/reply", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  try {
+    const response = await fetch("/api/forum", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, action: "reply" }),
+    });
 
-  if (!response.ok) {
-    throw new Error("Yanit gonderilemedi");
+    if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
+      throw new Error("Yanit gonderilemedi");
+    }
+
+    return storeLocalForumReply(payload.city, await response.json());
+  } catch {
+    return storeLocalForumReply(payload.city, buildLocalForumReply(payload));
   }
-
-  return response.json();
 }
 
 const cityData = {
@@ -1518,6 +1516,216 @@ function getDemoCommentsForArea(area) {
       createdAt: now - 1000 * 60 * 60 * 2,
     },
   ];
+}
+
+function readStorage(key, fallback) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
+  } catch {
+    return fallback;
+  }
+}
+
+function writeStorage(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // localStorage may be unavailable in private or restricted contexts.
+  }
+}
+
+function getStoredRatings(cityKey) {
+  const ratings = readStorage("rotaradar:ratings", {});
+  return ratings[cityKey] || {};
+}
+
+function storeLocalRating(cityKey, areaId, rating, comment) {
+  const ratings = readStorage("rotaradar:ratings", {});
+  const cityRatings = ratings[cityKey] || {};
+  const current = cityRatings[areaId] || { scoreTotal: 0, votes: 0, comments: [] };
+  const nextComment = {
+    rating,
+    text: comment,
+    createdAt: Date.now(),
+  };
+  const next = {
+    scoreTotal: Number(current.scoreTotal || 0) + rating,
+    votes: Number(current.votes || 0) + 1,
+    comments: [...(current.comments || []), nextComment].slice(-40),
+  };
+
+  cityRatings[areaId] = next;
+  ratings[cityKey] = cityRatings;
+  writeStorage("rotaradar:ratings", ratings);
+
+  return {
+    areaId,
+    score: next.scoreTotal / next.votes,
+    votes: next.votes,
+    comments: next.comments,
+  };
+}
+
+function applyCityRatings(cityKey, ratings) {
+  const city = cityData[cityKey];
+  if (!city) return;
+
+  city.areas.forEach((area) => {
+    const base = baseScores.get(getAreaKey(cityKey, area.id));
+    const rating = ratings[area.id];
+
+    if (!base) return;
+
+    if (rating?.votes > 0) {
+      const totalVotes = base.votes + rating.votes;
+      area.score = (base.score * base.votes + rating.scoreTotal) / totalVotes;
+      area.votes = totalVotes;
+      area.comments =
+        Array.isArray(rating.comments) && rating.comments.length > 0
+          ? rating.comments
+          : getDemoCommentsForArea(area);
+    } else {
+      area.score = base.score;
+      area.votes = base.votes;
+      area.comments = getDemoCommentsForArea(area);
+    }
+  });
+}
+
+function getDemoForum(cityKey) {
+  const now = Date.now();
+  const demos = {
+    izmir: [
+      {
+        id: "izmir-demo-1",
+        title: "Kordon gece güvenliği",
+        author: "Merve",
+        createdAt: now - 1000 * 60 * 60 * 20,
+        messages: [
+          {
+            id: "izmir-demo-m1",
+            author: "Merve",
+            text: "Kordon'da 21:00 sonrası kalabalık nasıldı?",
+            createdAt: now - 1000 * 60 * 60 * 20,
+          },
+        ],
+      },
+    ],
+    ankara: [
+      {
+        id: "ankara-demo-1",
+        title: "AOÇ hafta sonu rota önerisi",
+        author: "Can",
+        createdAt: now - 1000 * 60 * 60 * 12,
+        messages: [
+          {
+            id: "ankara-demo-m1",
+            author: "Can",
+            text: "Atatürk Orman Çiftliği için en rahat giriş neresi?",
+            createdAt: now - 1000 * 60 * 60 * 12,
+          },
+        ],
+      },
+    ],
+    istanbul: [
+      {
+        id: "istanbul-demo-1",
+        title: "Sultanahmet bölgesi kalabalık saatler",
+        author: "Burak",
+        createdAt: now - 1000 * 60 * 60 * 8,
+        messages: [
+          {
+            id: "istanbul-demo-m1",
+            author: "Burak",
+            text: "Sultanahmet'e en sakin saat ne zaman?",
+            createdAt: now - 1000 * 60 * 60 * 8,
+          },
+          {
+            id: "istanbul-demo-m2",
+            author: "Elif",
+            text: "08:30-10:00 arası daha rahat oluyor.",
+            createdAt: now - 1000 * 60 * 60 * 7,
+          },
+        ],
+      },
+    ],
+  };
+
+  return demos[cityKey] || [];
+}
+
+function getStoredForum(cityKey) {
+  const forum = readStorage("rotaradar:forum", {});
+  return mergeForumTopics(forum[cityKey] || [], getDemoForum(cityKey));
+}
+
+function writeStoredForum(cityKey, topics) {
+  const forum = readStorage("rotaradar:forum", {});
+  forum[cityKey] = topics;
+  writeStorage("rotaradar:forum", forum);
+}
+
+function mergeForumTopics(primary, secondary) {
+  const byId = new Map();
+  [...primary, ...secondary].forEach((topic) => {
+    if (topic?.id && !byId.has(topic.id)) byId.set(topic.id, topic);
+  });
+  return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function buildLocalForumTopic(payload) {
+  const now = Date.now();
+  return {
+    id: `${payload.city}-${now}`,
+    title: payload.title,
+    author: payload.author,
+    createdAt: now,
+    messages: [
+      {
+        id: `m-${now}`,
+        author: payload.author,
+        text: payload.text,
+        createdAt: now,
+      },
+    ],
+  };
+}
+
+function storeLocalForumTopic(cityKey, topic) {
+  const stored = readStorage("rotaradar:forum", {});
+  const topics = stored[cityKey] || [];
+  const next = mergeForumTopics([topic, ...topics], []);
+  writeStoredForum(cityKey, next);
+  return topic;
+}
+
+function buildLocalForumReply(payload) {
+  return {
+    topicId: payload.topicId,
+    message: {
+      id: `m-${Date.now()}`,
+      author: payload.author,
+      text: payload.text,
+      createdAt: Date.now(),
+    },
+  };
+}
+
+function storeLocalForumReply(cityKey, result) {
+  const stored = readStorage("rotaradar:forum", {});
+  const storedTopics = stored[cityKey] || [];
+  const sourceTopics = mergeForumTopics(storedTopics, forumTopics);
+  const targetTopic = sourceTopics.find((topic) => topic.id === result.topicId);
+  const topics = targetTopic && !storedTopics.some((topic) => topic.id === result.topicId)
+    ? [targetTopic, ...storedTopics]
+    : storedTopics;
+  const next = topics.map((topic) =>
+    topic.id === result.topicId
+      ? { ...topic, messages: [...topic.messages, result.message] }
+      : topic,
+  );
+  writeStoredForum(cityKey, next);
+  return result;
 }
 
 function renderAreaComments(area) {

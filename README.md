@@ -1,36 +1,51 @@
 # RotaRadar Demo
 
-Derste mobil uygulama fikrini web üzerinden göstermek için hazırlanmış dinamik demo.
+RotaRadar, derste mobil uygulama fikrini web üzerinden göstermek için hazırlanmış güvenli rota ve şehir keşfi demosudur.
+
+Bu sürüm Cloudflare Pages uyumludur. Klasik `server.js` kullanılmaz; frontend Vite ile statik olarak build edilir, API endpointleri Cloudflare Pages Functions altında çalışır.
 
 ## Çalıştırma
 
 Node.js 18 veya üzeri gerekir.
 
 ```powershell
-npm start
+npm install
+npm run dev
 ```
 
-Ardından tarayıcıda aç:
-
-```text
-http://127.0.0.1:5173
-```
-
-Farklı port kullanmak için:
+Production build kontrolü:
 
 ```powershell
-$env:PORT=5174; npm start
+npm run build
+npm run preview
 ```
 
-## Dinamik Puanlama
+## Cloudflare Pages Deploy
 
-- Kullanıcılar bir güvenlik bölgesi seçip 1-5 arası puan verir.
-- Puanlar backend tarafında `data/ratings.json` dosyasına yazılır.
-- Aynı siteye giren diğer kullanıcılar güncel ortalama puan ve oy sayılarını görür.
-- Demo sınıf kullanımı için 20-30 kişilik eş zamanlı denemede yeterlidir.
+Cloudflare Pages ayarları:
 
-## Hosting Notu
+- Build command: `npm run build`
+- Build output directory: `dist`
+- Framework preset: `Vite` veya `None`
 
-Bu proje artık sadece statik hosting değil, Node.js çalıştırabilen bir hosting ister. Render, Railway, Fly.io, VPS veya Node destekli benzer servislerde `npm start` komutu ile yayınlanabilir.
+## Mimari
 
-Ücretsiz sunucusuz platformlarda dosya sistemi kalıcı olmayabilir. Puanların kalıcı kalması gerekiyorsa `data/ratings.json` yerine küçük bir veritabanı kullanmak gerekir.
+- Frontend: Vite tabanlı statik frontend
+- Static output: `dist`
+- Serverless API: `functions/api`
+- Kullanılmayan eski yapı: `server.js`
+
+API endpointleri:
+
+- `GET /api/ratings`
+- `POST /api/ratings`
+- `GET /api/forum`
+- `POST /api/forum`
+- `GET /api/reports`
+- `POST /api/reports`
+
+## Veri Notu
+
+Bu sürümde `data/*.json` dosyalarına yazma yapılmaz. Cloudflare Pages ortamında kalıcı dosya sistemi beklenmediği için API endpointleri şimdilik demo veri ve request-response mantığıyla çalışır.
+
+Kalıcı veri gerektiğinde Supabase, Cloudflare KV veya D1 bağlanabilir. API kodu bu geçişe uygun şekilde `functions/api` altında ayrılmıştır.
