@@ -1,4 +1,6 @@
-﻿const toLeafletPoints = (coordinates) => coordinates.map(([lng, lat]) => [lat, lng]);
+﻿import { getMessages, sendMessage, subscribeToMessages } from "./src/services/chatService.js";
+
+const toLeafletPoints = (coordinates) => coordinates.map(([lng, lat]) => [lat, lng]);
 
 const izmirDemoAreas = [
   {
@@ -1264,60 +1266,133 @@ function formatForumTime(timestamp) {
   });
 }
 
-const FORUM_STORAGE_KEY = "rotaradar:forum:v2";
+function normalizeForumRoomId(value) {
+  const normalized = String(value || "")
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .replaceAll("ı", "i");
 
-async function fetchForum(cityKey) {
-  try {
-    const response = await fetch(`/api/forum?city=${encodeURIComponent(cityKey)}`, {
-      cache: "no-store",
-    });
+  if (normalized.includes("izmir")) return "izmir";
+  if (normalized.includes("istanbul")) return "istanbul";
+  if (normalized.includes("ankara")) return "ankara";
+  return cityData?.[normalized] ? normalized : "istanbul";
+}
 
-    if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
-      throw new Error("Forum yuklenemedi");
+function splitForumRowText(text) {
+  return String(text || "").split("|");
+}
+
+function rowCreatedAt(row) {
+  return row?.$createdAt ? new Date(row.$createdAt).getTime() : Date.now();
+}
+
+function appwriteRowsToForumTopics(rows) {
+  const topics = [];
+  const topicById = new Map();
+  const pendingReplies = [];
+
+  rows.forEach((row) => {
+    const parts = splitForumRowText(row.text);
+    const kind = parts[0];
+    const createdAt = rowCreatedAt(row);
+
+    if (kind === "T") {
+      const title = (parts[1] || "").trim() || "Konu";
+      const firstMessage = parts.slice(2).join("|").trim();
+      const topic = {
+        id: row.$id,
+        title,
+        author: row.userName || "Anonim",
+        createdAt,
+        messages: [],
+      };
+
+      if (firstMessage) {
+        topic.messages.push({
+          id: `${row.$id}:first`,
+          author: row.userName || "Anonim",
+          text: firstMessage,
+          createdAt,
+        });
+      }
+
+      topicById.set(topic.id, topic);
+      topics.push(topic);
+      return;
     }
 
-    return mergeForumTopics(await response.json(), getStoredForum(cityKey));
-  } catch {
-    return getStoredForum(cityKey);
-  }
+    if (kind === "R") {
+      pendingReplies.push({
+        topicId: parts[1],
+        message: {
+          id: row.$id,
+          author: row.userName || "Anonim",
+          text: parts.slice(2).join("|").trim(),
+          createdAt,
+        },
+      });
+      return;
+    }
+
+    const topic = {
+      id: row.$id,
+      title: String(row.text || "Konu").trim() || "Konu",
+      author: row.userName || "Anonim",
+      createdAt,
+      messages: [],
+    };
+    topicById.set(topic.id, topic);
+    topics.push(topic);
+  });
+
+  pendingReplies.forEach((reply) => {
+    const topic = topicById.get(reply.topicId);
+    if (!topic || !reply.message.text) return;
+    topic.messages.push(reply.message);
+  });
+
+  topics.forEach((topic) => {
+    topic.messages.sort((a, b) => a.createdAt - b.createdAt);
+  });
+
+  return topics.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+async function fetchForum(cityKey) {
+  const roomId = normalizeForumRoomId(cityKey);
+  const rows = await getMessages(roomId);
+  return appwriteRowsToForumTopics(rows);
 }
 
 async function createForumTopic(payload) {
-  try {
-    const response = await fetch("/api/forum", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-
-    if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
-      throw new Error("Konu olusturulamadi");
-    }
-
-    return storeLocalForumTopic(payload.city, await response.json());
-  } catch {
-    return storeLocalForumTopic(payload.city, buildLocalForumTopic(payload));
-  }
+  const roomId = normalizeForumRoomId(payload.city);
+  const title = payload.title.trim();
+  const text = payload.text.trim();
+  const row = await sendMessage({
+    roomId,
+    userName: payload.author,
+    text: `T|${title}|${text}`,
+  });
+  return appwriteRowsToForumTopics([row])[0];
 }
 
 async function createForumReply(payload) {
-  try {
-    const response = await fetch("/api/forum", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, action: "reply" }),
-    });
-
-    if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
-      throw new Error("Yanit gonderilemedi");
-    }
-
-    return storeLocalForumReply(payload.city, await response.json());
-  } catch {
-    return storeLocalForumReply(payload.city, buildLocalForumReply(payload));
-  }
+  const roomId = normalizeForumRoomId(payload.city);
+  const row = await sendMessage({
+    roomId,
+    userName: payload.author,
+    text: `R|${payload.topicId}|${payload.text.trim()}`,
+  });
+  return {
+    topicId: payload.topicId,
+    message: {
+      id: row.$id,
+      author: row.userName || payload.author || "Anonim",
+      text: splitForumRowText(row.text).slice(2).join("|").trim(),
+      createdAt: rowCreatedAt(row),
+    },
+  };
 }
-
 const cityData = {
   izmir: {
     name: "\u0130zmir",
@@ -1558,7 +1633,7 @@ let currentCityKey = "izmir";
 let selectedArea;
 let selectedRating = null;
 let forumTopics = [];
-let forumRefreshTimer = null;
+let forumUnsubscribe = null;
 let regionLayer = L.layerGroup();
 let markerLayer = L.layerGroup();
 let routeLayer = L.layerGroup();
@@ -1756,142 +1831,6 @@ function applyCityRatings(cityKey, ratings) {
       area.comments = getDemoCommentsForArea(area);
     }
   });
-}
-
-function getDemoForum(cityKey) {
-  const now = Date.now();
-  const demos = {
-    izmir: [
-      {
-        id: "izmir-demo-1",
-        title: "Kordon gece güvenliği",
-        author: "Merve",
-        createdAt: now - 1000 * 60 * 60 * 20,
-        messages: [
-          {
-            id: "izmir-demo-m1",
-            author: "Merve",
-            text: "Kordon'da 21:00 sonrası kalabalık nasıldı?",
-            createdAt: now - 1000 * 60 * 60 * 20,
-          },
-        ],
-      },
-    ],
-    ankara: [
-      {
-        id: "ankara-demo-1",
-        title: "AOÇ hafta sonu rota önerisi",
-        author: "Can",
-        createdAt: now - 1000 * 60 * 60 * 12,
-        messages: [
-          {
-            id: "ankara-demo-m1",
-            author: "Can",
-            text: "Atatürk Orman Çiftliği için en rahat giriş neresi?",
-            createdAt: now - 1000 * 60 * 60 * 12,
-          },
-        ],
-      },
-    ],
-    istanbul: [
-      {
-        id: "istanbul-demo-1",
-        title: "Sultanahmet bölgesi kalabalık saatler",
-        author: "Burak",
-        createdAt: now - 1000 * 60 * 60 * 8,
-        messages: [
-          {
-            id: "istanbul-demo-m1",
-            author: "Burak",
-            text: "Sultanahmet'e en sakin saat ne zaman?",
-            createdAt: now - 1000 * 60 * 60 * 8,
-          },
-          {
-            id: "istanbul-demo-m2",
-            author: "Elif",
-            text: "08:30-10:00 arası daha rahat oluyor.",
-            createdAt: now - 1000 * 60 * 60 * 7,
-          },
-        ],
-      },
-    ],
-  };
-
-  return demos[cityKey] || [];
-}
-
-function mergeForumTopics(primary, secondary) {
-  const byId = new Map();
-  [...primary, ...secondary].forEach((topic) => {
-    if (topic?.id && !byId.has(topic.id)) byId.set(topic.id, topic);
-  });
-  return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
-}
-
-function getStoredForum(cityKey) {
-  const forum = readStorage(FORUM_STORAGE_KEY, {});
-  return mergeForumTopics(forum[cityKey] || [], getDemoForum(cityKey));
-}
-
-function writeStoredForum(cityKey, topics) {
-  const forum = readStorage(FORUM_STORAGE_KEY, {});
-  forum[cityKey] = topics;
-  writeStorage(FORUM_STORAGE_KEY, forum);
-}
-
-function buildLocalForumTopic(payload) {
-  const now = Date.now();
-  return {
-    id: `${payload.city}-${now}`,
-    title: payload.title,
-    author: payload.author,
-    createdAt: now,
-    messages: [
-      {
-        id: `m-${now}`,
-        author: payload.author,
-        text: payload.text,
-        createdAt: now,
-      },
-    ],
-  };
-}
-
-function storeLocalForumTopic(cityKey, topic) {
-  const stored = readStorage(FORUM_STORAGE_KEY, {});
-  const topics = stored[cityKey] || [];
-  const next = mergeForumTopics([topic, ...topics], []);
-  writeStoredForum(cityKey, next);
-  return topic;
-}
-
-function buildLocalForumReply(payload) {
-  return {
-    topicId: payload.topicId,
-    message: {
-      id: `m-${Date.now()}`,
-      author: payload.author,
-      text: payload.text,
-      createdAt: Date.now(),
-    },
-  };
-}
-
-function storeLocalForumReply(cityKey, result) {
-  const stored = readStorage(FORUM_STORAGE_KEY, {});
-  const storedTopics = stored[cityKey] || [];
-  const sourceTopics = mergeForumTopics(storedTopics, forumTopics);
-  const targetTopic = sourceTopics.find((topic) => topic.id === result.topicId);
-  const topics = targetTopic && !storedTopics.some((topic) => topic.id === result.topicId)
-    ? [targetTopic, ...storedTopics]
-    : storedTopics;
-  const next = topics.map((topic) =>
-    topic.id === result.topicId
-      ? { ...topic, messages: [...topic.messages, result.message] }
-      : topic,
-  );
-  writeStoredForum(cityKey, next);
-  return result;
 }
 
 function renderAreaComments(area) {
@@ -2093,40 +2032,53 @@ function renderForum() {
     .join("");
 }
 
+function showForumError(message = "Mesaj gönderilemedi") {
+  if (!forumList) return;
+  const errorHtml = `<p class="forum-error" role="alert">${escapeHtml(message)}</p>`;
+  forumList.insertAdjacentHTML("afterbegin", errorHtml);
+}
+
 async function refreshForum(cityKey) {
   try {
     forumTopics = await fetchForum(cityKey);
     renderForum();
-  } catch {
+  } catch (error) {
+    console.error("Appwrite forum list failed", {
+      roomId: normalizeForumRoomId(cityKey),
+      message: error?.message || String(error),
+    });
     forumList.innerHTML = `<p class="forum-meta">${escapeHtml(t("forumLoadError"))}</p>`;
   }
 }
 
-function startForumAutoRefresh(cityKey) {
-  if (forumRefreshTimer) {
-    window.clearInterval(forumRefreshTimer);
+function startForumRealtime(cityKey) {
+  if (forumUnsubscribe) {
+    forumUnsubscribe();
+    forumUnsubscribe = null;
   }
 
-  forumRefreshTimer = window.setInterval(() => {
-    if (document.hidden) return;
-    const active = document.activeElement;
-    const isTypingInForum =
-      active &&
-      (forumTopicForm?.contains(active) || forumList?.contains(active)) &&
-      (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
-    if (isTypingInForum) return;
-    refreshForum(cityKey);
-  }, 5000);
+  const roomId = normalizeForumRoomId(cityKey);
+  try {
+    forumUnsubscribe = subscribeToMessages(roomId, () => {
+      refreshForum(roomId);
+    });
+  } catch (error) {
+    console.error("Appwrite realtime subscribe failed", {
+      roomId,
+      message: error?.message || String(error),
+    });
+  }
 }
 
 function setForumCity(cityKey) {
-  if (!cityData[cityKey]) return;
-  currentCityKey = cityKey;
-  if (forumCityLabel) forumCityLabel.textContent = getCityName(cityKey);
-  destinationSelect.value = cityKey;
-  if (chatCitySelect) chatCitySelect.value = cityKey;
-  refreshForum(cityKey);
-  startForumAutoRefresh(cityKey);
+  const roomId = normalizeForumRoomId(cityKey);
+  if (!cityData[roomId]) return;
+  currentCityKey = roomId;
+  if (forumCityLabel) forumCityLabel.textContent = getCityName(roomId);
+  destinationSelect.value = roomId;
+  if (chatCitySelect) chatCitySelect.value = roomId;
+  refreshForum(roomId);
+  startForumRealtime(roomId);
 }
 
 async function openMap(cityKey) {
@@ -2388,7 +2340,7 @@ forumTopicForm?.addEventListener("submit", async (event) => {
   const author = forumAuthorInput.value.trim();
   const title = forumTitleInput.value.trim();
   const text = forumMessageInput.value.trim();
-  if (!author || !title || !text) return;
+  if (!author || !title) return;
 
   const submitButton = forumTopicForm.querySelector("button[type='submit']");
   submitButton.disabled = true;
@@ -2402,9 +2354,10 @@ forumTopicForm?.addEventListener("submit", async (event) => {
     });
     forumTopics.unshift(created);
     renderForum();
-    refreshForum(currentCityKey);
     forumTitleInput.value = "";
     forumMessageInput.value = "";
+  } catch {
+    showForumError("Mesaj gönderilemedi");
   } finally {
     submitButton.disabled = false;
   }
@@ -2444,10 +2397,11 @@ forumList?.addEventListener("submit", async (event) => {
       topic.messages.push(result.message);
       renderForum();
     }
-    refreshForum(currentCityKey);
+    input.value = "";
+  } catch {
+    showForumError("Mesaj gönderilemedi");
   } finally {
     submitButton.disabled = false;
-    input.value = "";
   }
 });
 
@@ -2513,5 +2467,8 @@ routeGenerate?.addEventListener("click", async () => {
   routeGenerate.disabled = false;
   closeRouteModal();
 });
+
+
+
 
 

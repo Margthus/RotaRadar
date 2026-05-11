@@ -22,16 +22,26 @@ export async function sendMessage({ text, userName, roomId = "general" }) {
     return null;
   }
 
-  return tablesDB.createRow(
-    appwriteConfig.databaseId,
-    appwriteConfig.messagesTableId,
-    ID.unique(),
-    {
-      text: cleanText,
-      userName: cleanUserName,
+  try {
+    return await tablesDB.createRow(
+      appwriteConfig.databaseId,
+      appwriteConfig.messagesTableId,
+      ID.unique(),
+      {
+        text: cleanText,
+        userName: cleanUserName,
+        roomId,
+      }
+    );
+  } catch (error) {
+    console.error("Appwrite createRow failed", {
+      databaseId: appwriteConfig.databaseId,
+      tableId: appwriteConfig.messagesTableId,
       roomId,
-    }
-  );
+      message: error?.message || String(error),
+    });
+    throw error;
+  }
 }
 
 export function subscribeToMessages(roomId, callback) {
