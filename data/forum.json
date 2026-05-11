@@ -2,20 +2,20 @@
   "izmir": [
     {
       "id": "izmir-1",
-      "title": "Kordon gece guvenligi",
+      "title": "Kordon gece güvenliği",
       "author": "Merve",
       "createdAt": 1778271038031,
       "messages": [
         {
           "id": "m1",
           "author": "Merve",
-          "text": "Kordon'da 21:00 sonrasi kalabalik nasildi?",
+          "text": "Kordon'da 21:00 sonrası kalabalık nasıldı?",
           "createdAt": 1778271038031
         },
         {
           "id": "m2",
           "author": "Ege",
-          "text": "Hafta ici genelde rahat, ara sokaklara tek girmemek daha iyi.",
+          "text": "Hafta içi genelde rahat, ara sokaklara tek girmemek daha iyi.",
           "createdAt": 1778281838031
         }
       ]
@@ -24,20 +24,20 @@
   "ankara": [
     {
       "id": "ankara-1",
-      "title": "AOC hafta sonu rota onerisi",
+      "title": "AOC hafta sonu rota önerisi",
       "author": "Can",
       "createdAt": 1778299838031,
       "messages": [
         {
           "id": "m1",
           "author": "Can",
-          "text": "Ataturk Orman Ciftligi icin en rahat giris neresi?",
+          "text": "Atatürk Orman Çiftliği için en rahat giriş neresi?",
           "createdAt": 1778299838031
         },
         {
           "id": "m2",
           "author": "Sena",
-          "text": "Sabah erken gidersen trafik az oluyor, park ici yuruyus guzel.",
+          "text": "Sabah erken gidersen trafik az oluyor, park içi yürüyüş güzel.",
           "createdAt": 1778307038031
         }
       ]
@@ -46,7 +46,7 @@
   "istanbul": [
     {
       "id": "istanbul-1778341149978",
-      "title": "İstanbulda geceleri tehlikeli bölgeler",
+      "title": "İstanbul'da geceleri tehlikeli bölgeler",
       "author": "Mustafa",
       "createdAt": 1778341149978,
       "messages": [
@@ -66,7 +66,7 @@
     },
     {
       "id": "istanbul-1",
-      "title": "Sultanahmet bolgesi kalabalik saatler",
+      "title": "Sultanahmet bölgesi kalabalık saatler",
       "author": "Burak",
       "createdAt": 1778317838031,
       "messages": [
@@ -79,7 +79,7 @@
         {
           "id": "m2",
           "author": "Elif",
-          "text": "08:30-10:00 arasi daha rahat oluyor.",
+          "text": "08:30-10:00 arası daha rahat oluyor.",
           "createdAt": 1778321438031
         }
       ]

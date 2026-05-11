@@ -1,4 +1,18 @@
-﻿import { getMessages, sendMessage, subscribeToMessages } from "./src/services/chatService.js";
+import {
+  getMessages,
+  sendMessage,
+  subscribeToMessages,
+  uploadForumImage,
+  getForumImageUrl,
+} from "./src/services/chatService.js";
+import {
+  getRegionReviews,
+  createRegionReview,
+  subscribeToRegionReviews,
+  calculateAverageRating,
+} from "./src/services/regionReviewService.js";
+import { calculateSafeRoute } from "./src/services/routeService.js";
+import { appwriteConfig } from "./src/lib/appwrite.js";
 
 const toLeafletPoints = (coordinates) => coordinates.map(([lng, lat]) => [lat, lng]);
 
@@ -1211,41 +1225,26 @@ function findAreaForMapClick(latlng) {
 }
 
 async function loadCityRatings(cityKey) {
-  try {
-    const response = await fetch(`/api/ratings?city=${encodeURIComponent(cityKey)}`, {
-      cache: "no-store",
-    });
+  const city = cityData[cityKey];
+  if (!city) return;
 
-    if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
-      throw new Error("Ratings API unavailable");
-    }
-
-    const ratings = await response.json();
-    applyCityRatings(cityKey, ratings);
-  } catch {
-    applyCityRatings(cityKey, getStoredRatings(cityKey));
-  }
+  city.areas.forEach((area) => {
+    const base = baseScores.get(getAreaKey(cityKey, area.id));
+    area.score = base?.score ?? area.score;
+    area.votes = 0;
+    area.comments = [];
+  });
 }
 
-async function submitAreaRating(cityKey, areaId, rating, comment) {
-  try {
-    const response = await fetch("/api/ratings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ city: cityKey, areaId, rating, comment }),
-    });
-
-    if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
-      throw new Error("Puan gönderilemedi");
-    }
-
-    const result = await response.json();
-    return storeLocalRating(cityKey, areaId, rating, comment, result);
-  } catch {
-    return storeLocalRating(cityKey, areaId, rating, comment);
-  }
+async function submitAreaRating(area, rating, comment) {
+  return createRegionReview({
+    regionId: getRegionReviewId(area, currentCityKey),
+    regionName: area.name,
+    city: currentCityKey,
+    userName: getReviewUserName(),
+    rating,
+    comment,
+  });
 }
 
 function escapeHtml(text) {
@@ -1307,12 +1306,13 @@ function appwriteRowsToForumTopics(rows) {
         messages: [],
       };
 
-      if (firstMessage) {
+      if (firstMessage || row.imageId) {
         topic.messages.push({
           id: `${row.$id}:first`,
           author: row.userName || "Anonim",
           text: firstMessage,
           createdAt,
+          imageId: row.imageId || "",
         });
       }
 
@@ -1329,6 +1329,7 @@ function appwriteRowsToForumTopics(rows) {
           author: row.userName || "Anonim",
           text: parts.slice(2).join("|").trim(),
           createdAt,
+          imageId: row.imageId || "",
         },
       });
       return;
@@ -1372,6 +1373,7 @@ async function createForumTopic(payload) {
     roomId,
     userName: payload.author,
     text: `T|${title}|${text}`,
+    imageId: payload.imageId || undefined,
   });
   return appwriteRowsToForumTopics([row])[0];
 }
@@ -1382,6 +1384,7 @@ async function createForumReply(payload) {
     roomId,
     userName: payload.author,
     text: `R|${payload.topicId}|${payload.text.trim()}`,
+    imageId: payload.imageId || undefined,
   });
   return {
     topicId: payload.topicId,
@@ -1390,6 +1393,7 @@ async function createForumReply(payload) {
       author: row.userName || payload.author || "Anonim",
       text: splitForumRowText(row.text).slice(2).join("|").trim(),
       createdAt: rowCreatedAt(row),
+      imageId: row.imageId || "",
     },
   };
 }
@@ -1462,15 +1466,20 @@ const emergencyOptions = document.querySelectorAll(".emergency-option");
 const routeButton = document.querySelector("#route-button");
 const routeOverlay = document.querySelector("#route-overlay");
 const routeClose = document.querySelector("#route-close");
-const routeMode = document.querySelector("#route-mode");
+const routeModeButtons = document.querySelectorAll("[data-route-mode]");
 const routeGenerate = document.querySelector("#route-generate");
 const routeFeedback = document.querySelector("#route-feedback");
+const routeSummary = document.querySelector("#route-summary");
+const routeTitle = document.querySelector("#route-title");
+const routeModeLabel = document.querySelector("#route-mode-label");
+const routeStartNote = document.querySelector("#route-start-note");
 const forumCityLabel = document.querySelector("#forum-city-label");
 const forumList = document.querySelector("#forum-list");
 const forumTopicForm = document.querySelector("#forum-topic-form");
 const forumAuthorInput = document.querySelector("#forum-author");
 const forumTitleInput = document.querySelector("#forum-title");
 const forumMessageInput = document.querySelector("#forum-message");
+const forumTopicImageInput = document.querySelector("#forum-topic-image");
 const homeEyebrow = document.querySelector("#home-eyebrow");
 const homeTitle = document.querySelector("#home-title");
 const homeIntro = document.querySelector("#home-intro");
@@ -1490,41 +1499,59 @@ const forumTopicSubmitButton = document.querySelector("#forum-topic-form button[
 const I18N = {
   tr: {
     langLabel: "Dil",
-    homeEyebrow: "Guvenli rota ve cevre kesfi",
-    homeTitle: "Hos geldin",
+    homeEyebrow: "Güvenli rota ve çevre keşfi",
+    homeTitle: "Hoş geldin",
     homeIntro:
-      "Gidecegin yeri yaz, cevredeki turistik alanlari, parklari, kafeleri ve yuruyus rotalarini guvenlik seviyeleriyle birlikte gor.",
-    destinationLabel: "Gitmek istedigin yer",
-    destinationPlaceholder: "Sehir sec",
-    searchHelper: "Demo sehirleri: Izmir, Ankara, Istanbul",
-    searchError: "Devam etmek icin Izmir, Ankara veya Istanbul secmelisin.",
+      "Gideceğin yeri yaz, çevredeki turistik alanları, parkları, kafeleri ve yürüyüş rotalarını güvenlik seviyeleriyle birlikte gör.",
+    destinationLabel: "Gitmek istediğin yer",
+    destinationPlaceholder: "Şehir seç",
+    searchHelper: "Demo şehirleri: İzmir, Ankara, İstanbul",
+    searchError: "Devam etmek için İzmir, Ankara veya İstanbul seçmelisin.",
     openChat: "Foruma git",
-    chatTitle: "Sehir Sohbeti",
-    forumTitle: "Sehir Forumu",
-    forumAuthorPlaceholder: "Ismin",
-    forumTopicPlaceholder: "Konu basligi",
-    forumFirstMessagePlaceholder: "Ilk mesaji yaz",
-    forumOpenTopic: "Konu ac",
-    searchAria: "Haritada goster",
+    chatTitle: "Şehir Sohbeti",
+    forumTitle: "Yeni konu aç",
+    forumAuthorPlaceholder: "İsmin",
+    forumTopicPlaceholder: "Konu başlığı",
+    forumFirstMessagePlaceholder: "İlk mesaj (opsiyonel)",
+    forumOpenTopic: "Konu aç",
+    searchAria: "Haritada göster",
     panelDetailHide: "Detay gizle",
-    panelDetailShow: "Detay goster",
-    selectedAreaLabel: "Secili bolge",
-    areaSelect: "Bolge sec",
-    mapSelect: "Haritadan sec",
-    areaScoreLabel: "Guven puani",
-    areaVotesLabel: "Kullanici oyu",
-    areaTypeLabel: "Bolge turu",
-    demoRatingLabel: "Demo puani ver",
+    panelDetailShow: "Detay göster",
+    selectedAreaLabel: "Seçili bölge",
+    areaSelect: "Bölge seç",
+    mapSelect: "Haritadan seç",
+    areaScoreLabel: "Güven puanı",
+    areaVotesLabel: "Kullanıcı oyu",
+    areaTypeLabel: "Bölge türü",
+    demoRatingLabel: "Bölgeyi değerlendir",
     commentPlaceholder: "Yorumunu yaz",
-    send: "Gonder",
-    routeButton: "Nasil giderim",
-    riskSafe: "Yesil - guvenli",
-    riskMedium: "Sari - dikkatli",
-    riskRisky: "Kirmizi - riskli",
-    noAreaComment: "Bu bolge icin henuz yorum yok.",
-    noForumTopic: "Bu sehir icin henuz konu yok.",
-    forumLoadError: "Forum su an yuklenemedi.",
-    replyPlaceholder: "Yanit yaz",
+    send: "Gönder",
+    routeButton: "Nasıl giderim",
+    routeTitle: "Nasıl giderim?",
+    routeModeLabel: "Rota modu seç:",
+    routeFastest: "En hızlı",
+    routeSafest: "En güvenli",
+    routeGenerate: "Rota oluştur",
+    routeCalculating: "Rota hesaplanıyor...",
+    routeStartNote: "Başlangıç: Harita merkezi",
+    routeStartError: "Başlangıç konumu alınamadı.",
+    routeCreateError: "Rota oluşturulamadı.",
+    routeFallbackSafe: "Güvenli rota oluşturulamadı, en hızlı rota gösteriliyor.",
+    riskSafe: "Yeşil - güvenli",
+    riskMedium: "Sarı - dikkatli",
+    riskRisky: "Kırmızı - riskli",
+    noAreaComment: "Bu bölge için henüz değerlendirme yok.",
+    noForumTopic: "Bu şehirde henüz konu yok. İlk soruyu sen sor.",
+    forumLoadError: "Forum şu an yüklenemedi.",
+    replyPlaceholder: "Yanıt yaz",
+    addPhoto: "Fotoğraf ekle",
+    noPhotoSelected: "Fotoğraf seçilmedi",
+    clearPhoto: "Kaldır",
+    sending: "Gönderiliyor...",
+    areaReviewSendError: "Değerlendirme gönderilemedi.",
+    areaReviewLoading: "Değerlendirmeler yükleniyor...",
+    areaRatingRequired: "Lütfen önce bir puan seç.",
+    areaCommentTooLong: "Yorum en fazla 300 karakter olabilir.",
   },
   en: {
     langLabel: "Language",
@@ -1538,10 +1565,10 @@ const I18N = {
     searchError: "To continue, select Izmir, Ankara, or Istanbul.",
     openChat: "Go to forum",
     chatTitle: "City Chat",
-    forumTitle: "City Forum",
+    forumTitle: "Start a new topic",
     forumAuthorPlaceholder: "Your name",
     forumTopicPlaceholder: "Topic title",
-    forumFirstMessagePlaceholder: "Write the first message",
+    forumFirstMessagePlaceholder: "First message (optional)",
     forumOpenTopic: "Open topic",
     searchAria: "Show on map",
     panelDetailHide: "Hide details",
@@ -1552,17 +1579,35 @@ const I18N = {
     areaScoreLabel: "Safety score",
     areaVotesLabel: "User votes",
     areaTypeLabel: "Area type",
-    demoRatingLabel: "Rate demo",
+    demoRatingLabel: "Rate area",
     commentPlaceholder: "Write your comment",
     send: "Send",
     routeButton: "How do I get there?",
+    routeTitle: "How do I get there?",
+    routeModeLabel: "Choose route mode:",
+    routeFastest: "Fastest",
+    routeSafest: "Safest",
+    routeGenerate: "Create route",
+    routeCalculating: "Calculating route...",
+    routeStartNote: "Start: Map center",
+    routeStartError: "Starting location could not be determined.",
+    routeCreateError: "Route could not be created.",
+    routeFallbackSafe: "Safe route could not be created, showing the fastest route instead.",
     riskSafe: "Green - safe",
     riskMedium: "Yellow - caution",
     riskRisky: "Red - risky",
-    noAreaComment: "No comments for this area yet.",
-    noForumTopic: "No topics for this city yet.",
+    noAreaComment: "No reviews for this area yet.",
+    noForumTopic: "No topics in this city yet. Ask the first question.",
     forumLoadError: "Forum could not be loaded right now.",
     replyPlaceholder: "Write a reply",
+    addPhoto: "Add photo",
+    noPhotoSelected: "No photo selected",
+    clearPhoto: "Remove",
+    sending: "Sending...",
+    areaReviewSendError: "Review could not be submitted.",
+    areaReviewLoading: "Loading reviews...",
+    areaRatingRequired: "Please select a rating first.",
+    areaCommentTooLong: "Comment can be at most 300 characters.",
   },
 };
 
@@ -1578,7 +1623,7 @@ function t(key) {
 
 function getCityName(cityKey) {
   const names = {
-    tr: { izmir: "Izmir", ankara: "Ankara", istanbul: "Istanbul" },
+    tr: { izmir: "İzmir", ankara: "Ankara", istanbul: "İstanbul" },
     en: { izmir: "Izmir", ankara: "Ankara", istanbul: "Istanbul" },
   };
   const lang = getCurrentLanguage();
@@ -1612,6 +1657,13 @@ function applyLanguage() {
   if (commentInput) commentInput.placeholder = t("commentPlaceholder");
   if (commentSubmit) commentSubmit.textContent = t("send");
   if (routeButton) routeButton.textContent = t("routeButton");
+  if (routeTitle) routeTitle.textContent = t("routeTitle");
+  if (routeModeLabel) routeModeLabel.textContent = t("routeModeLabel");
+  if (routeStartNote) routeStartNote.textContent = t("routeStartNote");
+  routeModeButtons.forEach((button) => {
+    button.textContent = t(button.dataset.routeMode === "safest" ? "routeSafest" : "routeFastest");
+  });
+  if (routeGenerate && !routeGenerate.disabled) routeGenerate.textContent = t("routeGenerate");
   if (riskPill?.classList.contains("is-neutral")) riskPill.textContent = t("mapSelect");
   if (!selectedArea && areaName) areaName.textContent = t("areaSelect");
   const destinationCities = destinationSelect?.querySelectorAll("option[value]");
@@ -1624,6 +1676,8 @@ function applyLanguage() {
   });
   if (forumCityLabel) forumCityLabel.textContent = getCityName(currentCityKey);
   if (cityTitle) cityTitle.textContent = getCityName(currentCityKey);
+  refreshUploadLabels(document);
+  if (forumTopics.length) renderForum();
   syncPanelToggleLabel();
 }
 
@@ -1632,8 +1686,13 @@ let currentCity = cityData.izmir;
 let currentCityKey = "izmir";
 let selectedArea;
 let selectedRating = null;
+let selectedRouteMode = "fastest";
 let forumTopics = [];
 let forumUnsubscribe = null;
+let topicDraft = { title: "", message: "" };
+const replyDrafts = {};
+let regionReviewUnsubscribe = null;
+let regionReviewRequestToken = 0;
 let regionLayer = L.layerGroup();
 let markerLayer = L.layerGroup();
 let routeLayer = L.layerGroup();
@@ -1748,12 +1807,12 @@ function getDemoCommentsForArea(area) {
   return [
     {
       rating: score,
-      text: `${area.name} bolgesinde gunduz saatlerinde guvenli hissettim.`,
+      text: `${area.name} bölgesinde gündüz saatlerinde güvenli hissettim.`,
       createdAt: now - 1000 * 60 * 60 * 6,
     },
     {
       rating: score,
-      text: `${area.type} noktalarina ulasim kolay, ana guzergahlarda kalmak daha iyi.`,
+      text: `${area.type} noktalarına ulaşım kolay, ana güzergahlarda kalmak daha iyi.`,
       createdAt: now - 1000 * 60 * 60 * 2,
     },
   ];
@@ -1775,62 +1834,126 @@ function writeStorage(key, value) {
   }
 }
 
-function getStoredRatings(cityKey) {
-  const ratings = readStorage("rotaradar:ratings", {});
-  return ratings[cityKey] || {};
+const FORUM_USER_NAME_KEY = "rotaradar:forum:userName";
+
+function saveForumUserName() {
+  const userName = forumAuthorInput?.value?.trim();
+  if (userName) writeStorage(FORUM_USER_NAME_KEY, userName);
 }
 
-function storeLocalRating(cityKey, areaId, rating, comment) {
-  const ratings = readStorage("rotaradar:ratings", {});
-  const cityRatings = ratings[cityKey] || {};
-  const current = cityRatings[areaId] || { scoreTotal: 0, votes: 0, comments: [] };
-  const nextComment = {
-    rating,
-    text: comment,
-    createdAt: Date.now(),
-  };
-  const next = {
-    scoreTotal: Number(current.scoreTotal || 0) + rating,
-    votes: Number(current.votes || 0) + 1,
-    comments: [...(current.comments || []), nextComment].slice(-40),
-  };
+function restoreForumUserName() {
+  if (!forumAuthorInput) return;
+  const savedUserName = readStorage(FORUM_USER_NAME_KEY, "");
+  if (savedUserName) forumAuthorInput.value = savedUserName;
+}
 
-  cityRatings[areaId] = next;
-  ratings[cityKey] = cityRatings;
-  writeStorage("rotaradar:ratings", ratings);
+function normalizeRegionSlug(value) {
+  return String(value || "")
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .replaceAll("ç", "c")
+    .replaceAll("ğ", "g")
+    .replaceAll("ı", "i")
+    .replaceAll("ö", "o")
+    .replaceAll("ş", "s")
+    .replaceAll("ü", "u")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    || "region";
+}
 
+function getRegionReviewId(area, cityKey = currentCityKey) {
+  return `${cityKey}:${normalizeRegionSlug(area?.id || area?.name)}`;
+}
+
+function getReviewUserName() {
+  const savedUserName = readStorage(FORUM_USER_NAME_KEY, "");
+  return String(savedUserName || "").trim() || "Anonim";
+}
+
+function mapRegionReviewRow(row) {
   return {
-    areaId,
-    score: next.scoreTotal / next.votes,
-    votes: next.votes,
-    comments: next.comments,
+    id: row.$id,
+    author: row.userName || "Anonim",
+    rating: Number(row.rating || 0),
+    text: String(row.comment || "").trim(),
+    createdAt: row.$createdAt ? new Date(row.$createdAt).getTime() : Date.now(),
   };
 }
 
-function applyCityRatings(cityKey, ratings) {
-  const city = cityData[cityKey];
-  if (!city) return;
+function showAreaReviewFeedback(message, isError = true) {
+  if (!commentsList) return;
+  commentsList.querySelector(".forum-error")?.remove();
+  commentsList.querySelector(".forum-meta[role='status']")?.remove();
+  if (!message) return;
+  const node = document.createElement("p");
+  node.className = isError ? "forum-error" : "forum-meta";
+  node.setAttribute("role", isError ? "alert" : "status");
+  node.textContent = message;
+  commentsList.prepend(node);
+}
 
-  city.areas.forEach((area) => {
-    const base = baseScores.get(getAreaKey(cityKey, area.id));
-    const rating = ratings[area.id];
+function applyRegionReviewsToArea(area, reviewRows) {
+  const reviews = reviewRows.map(mapRegionReviewRow);
+  const averageRating = calculateAverageRating(reviewRows);
+  const base = baseScores.get(getAreaKey(currentCityKey, area.id));
 
-    if (!base) return;
+  area.score = averageRating ?? base?.score ?? area.score;
+  area.votes = reviews.length;
+  area.comments = reviews;
+  return { reviews, averageRating };
+}
 
-    if (rating?.votes > 0) {
-      const totalVotes = base.votes + rating.votes;
-      area.score = (base.score * base.votes + rating.scoreTotal) / totalVotes;
-      area.votes = totalVotes;
-      area.comments =
-        Array.isArray(rating.comments) && rating.comments.length > 0
-          ? rating.comments
-          : getDemoCommentsForArea(area);
-    } else {
-      area.score = base.score;
-      area.votes = base.votes;
-      area.comments = getDemoCommentsForArea(area);
-    }
-  });
+async function loadRegionReviewsForArea(area) {
+  if (!area) return;
+  const regionId = getRegionReviewId(area, currentCityKey);
+  const requestToken = ++regionReviewRequestToken;
+
+  if (selectedArea?.id === area.id) {
+    showAreaReviewFeedback(t("areaReviewLoading"), false);
+  }
+
+  try {
+    const reviewRows = await getRegionReviews(regionId);
+    if (!selectedArea || selectedArea.id !== area.id || requestToken !== regionReviewRequestToken) return;
+
+    const { reviews, averageRating } = applyRegionReviewsToArea(area, reviewRows);
+    areaScore.textContent = Number.isFinite(averageRating) ? averageRating.toFixed(1) : (baseScores.get(getAreaKey(currentCityKey, area.id))?.score ?? area.score).toFixed(1);
+    areaVotes.textContent = reviews.length.toLocaleString("tr-TR");
+    renderAreaComments(area);
+  } catch {
+    if (!selectedArea || selectedArea.id !== area.id || requestToken !== regionReviewRequestToken) return;
+    const base = baseScores.get(getAreaKey(currentCityKey, area.id));
+    area.score = base?.score ?? area.score;
+    area.comments = [];
+    areaScore.textContent = Number(area.score || 0).toFixed(1);
+    areaVotes.textContent = "0";
+    renderAreaComments(area);
+  }
+}
+
+function startRegionReviewRealtime(area) {
+  if (regionReviewUnsubscribe) {
+    regionReviewUnsubscribe();
+    regionReviewUnsubscribe = null;
+  }
+
+  const regionId = getRegionReviewId(area, currentCityKey);
+  try {
+    regionReviewUnsubscribe = subscribeToRegionReviews(regionId, () => {
+      if (!selectedArea || selectedArea.id !== area.id) return;
+      loadRegionReviewsForArea(area);
+    });
+  } catch (error) {
+    console.error("Appwrite region review realtime subscribe failed", {
+      databaseId: appwriteConfig.databaseId,
+      tableId: appwriteConfig.regionReviewsTableId,
+      regionId,
+      message: error?.message || String(error),
+    });
+  }
 }
 
 function renderAreaComments(area) {
@@ -1843,8 +1966,7 @@ function renderAreaComments(area) {
   }
 
   commentsList.innerHTML = comments
-    .slice(-12)
-    .reverse()
+    .slice(0, 12)
     .map((item) => {
       const stamp = new Date(item.createdAt).toLocaleString("tr-TR", {
         day: "2-digit",
@@ -1852,9 +1974,18 @@ function renderAreaComments(area) {
         hour: "2-digit",
         minute: "2-digit",
       });
-      return `<div class="comment-item"><p>${escapeHtml(item.text)}</p><span>${item.rating}/5 · ${stamp}</span></div>`;
+      const body = item.text ? `<p>${escapeHtml(item.text)}</p>` : "";
+      return `<div class="comment-item">${body}<span>${escapeHtml(item.author || "Anonim")} · ${item.rating}/5 · ${stamp}</span></div>`;
     })
     .join("");
+}
+
+function resetAreaReviewComposer() {
+  selectedRating = null;
+  ratingButtons.forEach((button) => {
+    button.classList.remove("is-active");
+  });
+  if (commentInput) commentInput.value = "";
 }
 
 function openEmergencyModal() {
@@ -1879,105 +2010,196 @@ function closeRouteModal() {
   routeOverlay.classList.add("is-hidden");
 }
 
-function distance(a, b) {
-  return Math.hypot(a[0] - b[0], a[1] - b[1]);
+function setRouteMode(mode) {
+  selectedRouteMode = mode === "safest" ? "safest" : "fastest";
+  routeModeButtons.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.routeMode === selectedRouteMode);
+  });
 }
 
-function chooseWaypointByMode(mode, start, end) {
-  const midpoint = [(start[0] + end[0]) / 2, (start[1] + end[1]) / 2];
-  const candidates = currentCity.areas
-    .filter((area) => area.id !== selectedArea.id)
-    .map((area) => {
-      const center = getAreaCenter(area);
-      const nearPathPenalty = distance(center, midpoint) + distance(center, end);
-      const votes = Number(area.votes || 0);
-      const levelPenalty = area.level === "risky" ? 2 : area.level === "medium" ? 1 : 0;
-      const brightBoost = ["Turistik", "Çarşı", "Kafe", "Tarihi", "Müze", "Dini"].includes(area.type) ? 1 : 0;
-      const studentBoost = ["Çarşı", "Park", "Yürüyüş", "Kafe"].includes(area.type) ? 1 : 0;
-
-      let score = nearPathPenalty;
-      if (mode === "safe") score += levelPenalty * 2 - (area.score || 0) * 0.2;
-      if (mode === "crowded") score -= votes * 0.008 + brightBoost * 0.3;
-      if (mode === "calm") score += votes * 0.008 + brightBoost * 0.15;
-      if (mode === "student") score -= studentBoost * 1.1 - levelPenalty * 0.8 + distance(start, center) * 0.3;
-
-      return { area, center, score };
-    })
-    .sort((a, b) => a.score - b.score);
-
-  return candidates[0]?.center || null;
+function setRouteGenerating(isGenerating) {
+  if (!routeGenerate) return;
+  routeGenerate.disabled = isGenerating;
+  routeGenerate.textContent = isGenerating ? t("routeCalculating") : t("routeGenerate");
 }
 
-function getModeMeta(mode) {
-  if (mode === "safe") return { color: "#2f9b63", label: "En güvenli rota" };
-  if (mode === "crowded") return { color: "#2f7fb8", label: "En kalabalık rota" };
-  if (mode === "calm") return { color: "#6a5acd", label: "En sakin rota" };
-  return { color: "#2f6965", label: "Öğrenci modu" };
+function getRouteDisplayMeta(mode) {
+  if (mode === "safest") return { color: "#2f9b63", label: t("routeSafest") };
+  return { color: "#1d5f78", label: t("routeFastest") };
 }
 
-async function fetchRoadRoute(points) {
-  const coords = points.map(([lat, lng]) => `${lng},${lat}`).join(";");
-  const url = `https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`;
-  const response = await fetch(url);
-  if (!response.ok) throw new Error("route fetch failed");
-  const data = await response.json();
-  const route = data?.routes?.[0];
-  if (!route?.geometry?.coordinates?.length) throw new Error("empty route");
-
-  const latLngs = route.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+function getMapCenterRouteStart() {
+  if (!map?.getCenter) throw new Error(t("routeStartError"));
+  const center = map.getCenter();
+  if (!Number.isFinite(center?.lat) || !Number.isFinite(center?.lng)) {
+    throw new Error(t("routeStartError"));
+  }
   return {
-    points: latLngs,
-    distanceKm: route.distance / 1000,
-    durationMin: route.duration / 60,
+    latLng: [center.lat, center.lng],
+    coordinate: [center.lng, center.lat],
   };
 }
 
-async function drawRoute(mode) {
-  if (!map || !selectedArea) return;
-  const start = [map.getCenter().lat, map.getCenter().lng];
-  const end = getAreaCenter(selectedArea);
-  const waypoint = chooseWaypointByMode(mode, start, end);
-  const meta = getModeMeta(mode);
+function toRouteCoordinate(latLng) {
+  return [latLng[1], latLng[0]];
+}
 
-  routeLayer.clearLayers();
+function buildAreaPolygonRing(area) {
+  if (!Array.isArray(area?.points) || area.points.length < 3) return null;
+  const ring = area.points.map(([lat, lng]) => [lng, lat]);
+  const [firstLng, firstLat] = ring[0];
+  const [lastLng, lastLat] = ring[ring.length - 1];
 
-  const requestedPath = waypoint ? [start, waypoint, end] : [start, end];
-  let drawnPoints = requestedPath;
-  let distanceKm = null;
-  let durationMin = null;
-
-  try {
-    const route = await fetchRoadRoute(requestedPath);
-    drawnPoints = route.points;
-    distanceKm = route.distanceKm;
-    durationMin = route.durationMin;
-  } catch {
-    // fallback
+  if (firstLng !== lastLng || firstLat !== lastLat) {
+    ring.push([firstLng, firstLat]);
   }
 
-  L.polyline(drawnPoints, {
-    color: meta.color,
-    weight: 5,
-    opacity: 0.92,
-    lineJoin: "round",
+  return ring;
+}
+
+function estimateAreaFootprint(area) {
+  if (!Array.isArray(area?.points) || area.points.length < 3) return Number.POSITIVE_INFINITY;
+  const lats = area.points.map(([lat]) => lat);
+  const lngs = area.points.map(([, lng]) => lng);
+  return (Math.max(...lats) - Math.min(...lats)) * (Math.max(...lngs) - Math.min(...lngs));
+}
+
+function buildAvoidPolygonsForRoute(area, startLatLng, endLatLng) {
+  const midpoint = [
+    (startLatLng[0] + endLatLng[0]) / 2,
+    (startLatLng[1] + endLatLng[1]) / 2,
+  ];
+
+  const polygons = currentCity.areas
+    .filter((candidate) => candidate.id !== area.id)
+    .filter((candidate) => candidate.level === "risky" || candidate.level === "medium")
+    .filter((candidate) => estimateAreaFootprint(candidate) < 0.03)
+    .map((candidate) => {
+      const center = getAreaCenter(candidate);
+      const riskWeight = candidate.level === "risky" ? 0 : 1;
+      const proximity =
+        distanceBetweenPoints(center, midpoint)
+        + distanceBetweenPoints(center, endLatLng) * 0.7
+        + distanceBetweenPoints(center, startLatLng) * 0.4;
+
+      return {
+        candidate,
+        riskWeight,
+        proximity,
+      };
+    })
+    .sort((first, second) => {
+      if (first.riskWeight !== second.riskWeight) return first.riskWeight - second.riskWeight;
+      return first.proximity - second.proximity;
+    })
+    .slice(0, 8)
+    .map(({ candidate }) => buildAreaPolygonRing(candidate))
+    .filter(Boolean)
+    .map((ring) => [ring]);
+
+  if (!polygons.length) return null;
+
+  return {
+    type: "MultiPolygon",
+    coordinates: polygons,
+  };
+}
+
+function drawRouteOnMap(routeGeoJson, mode, startLatLng, endLatLng) {
+  const meta = getRouteDisplayMeta(mode);
+
+  L.geoJSON(routeGeoJson, {
+    style: {
+      color: meta.color,
+      weight: 5,
+      opacity: 0.92,
+      lineJoin: "round",
+    },
   }).addTo(routeLayer);
 
-  L.marker(start, {
+  L.marker(startLatLng, {
     icon: L.divIcon({ className: "route-start-dot", iconSize: [12, 12], iconAnchor: [6, 6] }),
   }).addTo(routeLayer);
 
-  L.marker(end, {
+  L.marker(endLatLng, {
     icon: L.divIcon({ className: "route-end-dot", iconSize: [12, 12], iconAnchor: [6, 6] }),
   }).addTo(routeLayer);
+}
 
-  const length = drawnPoints.reduce((total, point, index) => {
-    if (index === 0) return total;
-    return total + distance(drawnPoints[index - 1], point);
-  }, 0);
-  const km = distanceKm ?? Number((length * 111).toFixed(1));
-  const mins = durationMin ?? Math.max(6, Math.round(Number(km) * 11));
+function formatRouteMetrics(distanceMeters, durationSeconds) {
+  const distanceKm = Number(distanceMeters || 0) / 1000;
+  const durationMin = Number(durationSeconds || 0) / 60;
+  return `${distanceKm.toFixed(1)} km • ${Math.max(1, Math.round(durationMin))} dk`;
+}
 
-  if (routeFeedback) routeFeedback.textContent = `${meta.label} oluşturuldu • ~${Number(km).toFixed(1)} km • ~${Math.round(mins)} dk`;
+async function drawRoute(mode) {
+  if (!selectedArea) return false;
+
+  let start;
+  try {
+    start = getMapCenterRouteStart();
+  } catch (error) {
+    if (routeFeedback) routeFeedback.textContent = error.message || t("routeStartError");
+    routeLayer.clearLayers();
+    return false;
+  }
+
+  const endLatLng = getAreaCenter(selectedArea);
+  const end = toRouteCoordinate(endLatLng);
+  routeLayer.clearLayers();
+  if (routeSummary) routeSummary.textContent = "";
+  if (routeFeedback) routeFeedback.textContent = t("routeCalculating");
+
+  const requestedMode = mode === "safest" ? "safest" : "fastest";
+  const avoidPolygons = requestedMode === "safest"
+    ? buildAvoidPolygonsForRoute(selectedArea, start.latLng, endLatLng)
+    : null;
+
+  try {
+    const result = await calculateSafeRoute({
+      start: start.coordinate,
+      end,
+      mode: requestedMode,
+      profile: "foot-walking",
+      avoidPolygons,
+    });
+
+    drawRouteOnMap(result.routeGeoJson, requestedMode, start.latLng, endLatLng);
+    if (routeFeedback) {
+      routeFeedback.textContent = `${getRouteDisplayMeta(requestedMode).label} • ${formatRouteMetrics(result.distance, result.duration)}`;
+    }
+    if (routeSummary) {
+      routeSummary.textContent = `${t("routeStartNote")} • ${formatRouteMetrics(result.distance, result.duration)}`;
+    }
+    return true;
+  } catch (error) {
+    if (requestedMode !== "safest") {
+      if (routeFeedback) routeFeedback.textContent = t("routeCreateError");
+      return false;
+    }
+
+    try {
+      const fallback = await calculateSafeRoute({
+        start: start.coordinate,
+        end,
+        mode: "fastest",
+        profile: "foot-walking",
+        avoidPolygons: null,
+      });
+
+      drawRouteOnMap(fallback.routeGeoJson, "fastest", start.latLng, endLatLng);
+      if (routeFeedback) {
+        routeFeedback.textContent = `${t("routeFallbackSafe")} ${formatRouteMetrics(fallback.distance, fallback.duration)}`;
+      }
+      if (routeSummary) {
+        routeSummary.textContent = `${t("routeFallbackSafe")} ${formatRouteMetrics(fallback.distance, fallback.duration)}`;
+      }
+      return true;
+    } catch {
+      if (routeFeedback) routeFeedback.textContent = error?.message || t("routeCreateError");
+      return false;
+    }
+  }
 }
 
 function rememberBaseScores() {
@@ -1997,45 +2219,266 @@ function afterPaint(callback) {
   });
 }
 
-function renderForum() {
-  if (!forumList) return;
+function revokePreviewUrl(root) {
+  if (!root?.dataset.previewUrl) return;
+  URL.revokeObjectURL(root.dataset.previewUrl);
+  delete root.dataset.previewUrl;
+}
 
-  if (!forumTopics.length) {
-    forumList.innerHTML = `<p class="forum-meta">${escapeHtml(t("noForumTopic"))}</p>`;
+function refreshUploadLabels(scope = document) {
+  scope.querySelectorAll(".forum-upload").forEach((root) => {
+    const triggerText = root.querySelector(".forum-file-trigger span:last-child");
+    const fileName = root.querySelector(".forum-file-name");
+    const clearButton = root.querySelector(".forum-file-clear");
+    if (triggerText) triggerText.textContent = t("addPhoto");
+    if (fileName && !fileName.dataset.fileSelected) {
+      fileName.textContent = t("noPhotoSelected");
+      fileName.dataset.emptyText = t("noPhotoSelected");
+    }
+    if (clearButton) clearButton.textContent = t("clearPhoto");
+  });
+}
+
+function syncUploadUi(input) {
+  const root = input?.closest(".forum-upload");
+  if (!root) return;
+
+  const fileName = root.querySelector(".forum-file-name");
+  const clearButton = root.querySelector(".forum-file-clear");
+  const previewLink = root.querySelector(".forum-image-preview");
+  const previewImage = previewLink?.querySelector("img");
+  const file = input.files?.[0];
+
+  if (!file) {
+    revokePreviewUrl(root);
+    if (fileName) {
+      fileName.textContent = t("noPhotoSelected");
+      fileName.dataset.fileSelected = "";
+      fileName.dataset.emptyText = t("noPhotoSelected");
+    }
+    if (previewImage) previewImage.removeAttribute("src");
+    if (previewLink) {
+      previewLink.removeAttribute("href");
+      previewLink.classList.add("is-hidden");
+    }
+    if (clearButton) clearButton.classList.add("is-hidden");
     return;
   }
 
-  forumList.innerHTML = forumTopics
-    .map((topic) => {
-      const messagesHtml = topic.messages
-        .slice(-4)
-        .map(
-          (message) => `
-            <div class="forum-message">
-              <p>${escapeHtml(message.text)}</p>
-              <span>${escapeHtml(message.author)} · ${formatForumTime(message.createdAt)}</span>
-            </div>`,
-        )
-        .join("");
+  if (fileName) {
+    fileName.textContent = file.name;
+    fileName.dataset.fileSelected = "true";
+  }
 
-      return `
-        <article class="forum-topic" data-topic-id="${escapeHtml(topic.id)}">
-          <h4>${escapeHtml(topic.title)}</h4>
-          <p class="forum-meta">${escapeHtml(topic.author)} · ${formatForumTime(topic.createdAt)}</p>
-          <div class="forum-messages">${messagesHtml}</div>
-          <form class="forum-reply-form">
-            <input type="text" name="replyText" placeholder="${escapeHtml(t("replyPlaceholder"))}" maxlength="220" required />
-            <button type="submit">${escapeHtml(t("send"))}</button>
-          </form>
-        </article>`;
-    })
+  revokePreviewUrl(root);
+  const objectUrl = URL.createObjectURL(file);
+  root.dataset.previewUrl = objectUrl;
+  if (previewImage) previewImage.src = objectUrl;
+  if (previewLink) {
+    previewLink.href = objectUrl;
+    previewLink.classList.remove("is-hidden");
+  }
+  if (clearButton) clearButton.classList.remove("is-hidden");
+}
+
+function syncTopicDraftState() {
+  topicDraft = {
+    title: forumTitleInput?.value || "",
+    message: forumMessageInput?.value || "",
+  };
+}
+
+function restoreTopicDraftState() {
+  if (forumTitleInput && forumTitleInput.value !== topicDraft.title) {
+    forumTitleInput.value = topicDraft.title;
+  }
+  if (forumMessageInput && forumMessageInput.value !== topicDraft.message) {
+    forumMessageInput.value = topicDraft.message;
+  }
+}
+
+function setReplyDraft(topicId, value) {
+  if (!topicId) return;
+  if (value) {
+    replyDrafts[topicId] = value;
+    return;
+  }
+  delete replyDrafts[topicId];
+}
+
+function captureReplyDrafts() {
+  if (!forumList) return;
+  forumList.querySelectorAll(".forum-topic").forEach((topicNode) => {
+    const topicId = topicNode.dataset.topicId;
+    const replyInput = topicNode.querySelector("input[name='replyText']");
+    if (!replyInput) return;
+    setReplyDraft(topicId, replyInput.value);
+  });
+}
+
+function buildForumMessagesHtml(topic) {
+  return topic.messages
+    .slice(-4)
+    .map(
+      (message) => `
+        <div class="forum-message ${String(message.id).endsWith(":first") ? "is-first" : ""}">
+          <p>${escapeHtml(message.text)}</p>
+          ${message.imageId ? `<a class="forum-message-media" href="${escapeHtml(getForumImageUrl(message.imageId))}" target="_blank" rel="noreferrer"><img class="forum-message-image" src="${escapeHtml(getForumImageUrl(message.imageId))}" alt="Forum görseli" loading="lazy" /></a>` : ""}
+          <span>${escapeHtml(message.author)} · ${formatForumTime(message.createdAt)}</span>
+        </div>`,
+    )
     .join("");
+}
+
+function createForumTopicElement(topicId) {
+  const article = document.createElement("article");
+  article.className = "forum-topic";
+  article.dataset.topicId = topicId;
+  article.innerHTML = `
+    <div class="forum-topic-top">
+      <div>
+        <h4></h4>
+        <p class="forum-meta"></p>
+      </div>
+      <span class="reply-count"></span>
+    </div>
+    <div class="forum-messages"></div>
+    <form class="forum-reply-form">
+      <input type="text" name="replyText" maxlength="220" required />
+      <div class="forum-reply-actions">
+        <div class="forum-upload" data-upload-root>
+          <input type="file" name="replyImage" class="forum-file-input" accept="image/png,image/jpeg,image/webp" />
+          <div class="forum-upload-meta">
+            <label class="forum-file-trigger">
+              <span class="forum-file-trigger-icon" aria-hidden="true">+</span>
+              <span></span>
+            </label>
+            <span class="forum-file-name"></span>
+            <button type="button" class="forum-file-clear is-hidden"></button>
+          </div>
+          <a class="forum-image-preview is-hidden" target="_blank" rel="noreferrer">
+            <img alt="Seçilen görsel önizlemesi" />
+          </a>
+        </div>
+        <button type="submit"></button>
+      </div>
+    </form>`;
+  return article;
+}
+
+function updateForumTopicElement(article, topic) {
+  const replyCount = topic.messages.filter((message) => !String(message.id).endsWith(":first")).length;
+  const titleNode = article.querySelector("h4");
+  const metaNode = article.querySelector(".forum-meta");
+  const replyCountNode = article.querySelector(".reply-count");
+  const messagesNode = article.querySelector(".forum-messages");
+  const replyInput = article.querySelector("input[name='replyText']");
+  const replyImageInput = article.querySelector("input[name='replyImage']");
+  const replyImageLabel = article.querySelector(".forum-file-trigger");
+  const replyButton = article.querySelector(".forum-reply-form button[type='submit']");
+
+  article.dataset.topicId = topic.id;
+  if (titleNode) titleNode.textContent = topic.title;
+  if (metaNode) metaNode.textContent = `${topic.author} · ${formatForumTime(topic.createdAt)}`;
+  if (replyCountNode) replyCountNode.textContent = `${replyCount} yanıt`;
+  if (messagesNode) messagesNode.innerHTML = buildForumMessagesHtml(topic);
+  if (replyInput) {
+    replyInput.placeholder = t("replyPlaceholder");
+    const draftValue = replyDrafts[topic.id] || "";
+    if (replyInput.value !== draftValue) replyInput.value = draftValue;
+  }
+  if (replyImageInput && replyImageLabel) {
+    const imageInputId = `reply-image-${String(topic.id).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+    replyImageInput.id = imageInputId;
+    replyImageLabel.htmlFor = imageInputId;
+    syncUploadUi(replyImageInput);
+  }
+  if (replyButton) replyButton.textContent = t("send");
+  refreshUploadLabels(article);
+}
+
+function renderForum() {
+  if (!forumList) return;
+  syncTopicDraftState();
+  captureReplyDrafts();
+
+  if (!forumTopics.length) {
+    forumList.innerHTML = `
+      <section class="forum-empty">
+        <strong>${escapeHtml(t("noForumTopic"))}</strong>
+        <span>${escapeHtml(getCityName(currentCityKey))} sohbetinde ilk basligi acabilirsin.</span>
+      </section>`;
+    restoreTopicDraftState();
+    return;
+  }
+
+  const existingTopics = new Map(
+    Array.from(forumList.querySelectorAll(".forum-topic")).map((node) => [node.dataset.topicId, node]),
+  );
+  const existingError = forumList.querySelector(".forum-error");
+  const fragment = document.createDocumentFragment();
+
+  if (existingError) fragment.append(existingError);
+
+  forumTopics.forEach((topic) => {
+    const article = existingTopics.get(topic.id) || createForumTopicElement(topic.id);
+    updateForumTopicElement(article, topic);
+    fragment.append(article);
+  });
+
+  forumList.replaceChildren(fragment);
+  restoreTopicDraftState();
 }
 
 function showForumError(message = "Mesaj gönderilemedi") {
   if (!forumList) return;
+  forumList.querySelector(".forum-error")?.remove();
   const errorHtml = `<p class="forum-error" role="alert">${escapeHtml(message)}</p>`;
   forumList.insertAdjacentHTML("afterbegin", errorHtml);
+}
+
+const BLOCKED_FORUM_TERMS = [
+  "amk",
+  "aq",
+  "siktir",
+  "orospu",
+  "piç",
+  "pic",
+  "fuck",
+  "shit",
+];
+
+const FORUM_ALLOWED_IMAGE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const FORUM_MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+
+function normalizeForumText(value) {
+  return String(value || "")
+    .toLocaleLowerCase("tr-TR")
+    .replaceAll("ı", "i")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function hasBlockedForumContent(...values) {
+  const text = normalizeForumText(values.join(" "));
+  return BLOCKED_FORUM_TERMS.some((term) => text.includes(normalizeForumText(term)));
+}
+
+function validateForumImage(file) {
+  if (!file) return null;
+  if (!FORUM_ALLOWED_IMAGE_TYPES.includes(file.type)) {
+    return "Sadece jpg, jpeg, png veya webp yukleyebilirsin.";
+  }
+  if (file.size > FORUM_MAX_IMAGE_BYTES) {
+    return "Resim en fazla 2MB olabilir.";
+  }
+  return null;
+}
+
+function setSubmittingButton(button, isSubmitting, idleText) {
+  if (!button) return;
+  button.disabled = isSubmitting;
+  button.textContent = isSubmitting ? t("sending") : idleText;
 }
 
 async function refreshForum(cityKey) {
@@ -2122,6 +2565,7 @@ function renderCity(city) {
   regionLayer.clearLayers();
   markerLayer.clearLayers();
   routeLayer.clearLayers();
+  if (routeSummary) routeSummary.textContent = "";
   map.setView(city.center, city.zoom);
 
   city.areas.forEach((area) => {
@@ -2200,15 +2644,16 @@ function selectArea(area) {
     areaImage.src = toBrowserPath(defaultCityImage[currentCityKey]);
   };
   areaImage.setAttribute("src", toBrowserPath(imagePath));
-  areaImage.alt = `${area.name} gorseli`;
+  areaImage.alt = `${area.name} görseli`;
   riskPill.textContent = getRiskLabel(area.level);
   riskPill.className = `risk-pill ${meta.className}`;
-  selectedRating = null;
-  ratingButtons.forEach((button) => {
-    button.classList.remove("is-active");
-  });
-  if (commentInput) commentInput.value = "";
+  resetAreaReviewComposer();
+  showAreaReviewFeedback("");
+  routeLayer.clearLayers();
+  if (routeSummary) routeSummary.textContent = "";
   renderAreaComments(area);
+  startRegionReviewRealtime(area);
+  loadRegionReviewsForArea(area);
 
   currentCity.areas.forEach((cityArea) => {
     const cityAreaPolygon = polygonById.get(cityArea.id);
@@ -2297,65 +2742,92 @@ ratingButtons.forEach((button) => {
 });
 
 commentSubmit?.addEventListener("click", async () => {
-  if (!selectedArea || !Number.isFinite(selectedRating)) return;
-  const comment = commentInput?.value?.trim() || "";
-  if (!comment) return;
+  if (!selectedArea) return;
+  const activeArea = selectedArea;
+  const activeRating = selectedRating;
 
-  commentSubmit.disabled = true;
+  if (!Number.isFinite(activeRating)) {
+    showAreaReviewFeedback(t("areaRatingRequired"));
+    return;
+  }
+
+  const comment = commentInput?.value?.trim() || "";
+  if (comment.length > 300) {
+    showAreaReviewFeedback(t("areaCommentTooLong"));
+    return;
+  }
+
+  if (comment && hasBlockedForumContent(comment)) {
+    showAreaReviewFeedback("Bu mesaj demo için uygun değil.");
+    return;
+  }
+
+  showAreaReviewFeedback("");
+  setSubmittingButton(commentSubmit, true, t("send"));
 
   try {
-    const result = await submitAreaRating(currentCityKey, selectedArea.id, selectedRating, comment);
-    const base = baseScores.get(getAreaKey(currentCityKey, selectedArea.id));
-    const serverTotal = result.score * result.votes;
-    const totalVotes = base.votes + result.votes;
-
-    selectedArea.score = (base.score * base.votes + serverTotal) / totalVotes;
-    selectedArea.votes = totalVotes;
-    if (Array.isArray(result.comments) && result.comments.length > 0) {
-      selectedArea.comments = result.comments;
-    } else {
-      const existing = Array.isArray(selectedArea.comments) ? selectedArea.comments : [];
-      selectedArea.comments = [
-        ...existing,
-        {
-          rating: selectedRating,
-          text: comment,
-          createdAt: Date.now(),
-        },
-      ].slice(-40);
+    await submitAreaRating(activeArea, activeRating, comment);
+    resetAreaReviewComposer();
+    if (selectedArea?.id === activeArea.id) {
+      await loadRegionReviewsForArea(activeArea);
     }
-    commentInput.value = "";
-    selectedRating = null;
-    selectArea(selectedArea);
   } catch {
-    // no-op for demo failure
+    showAreaReviewFeedback(t("areaReviewSendError"));
   } finally {
-    commentSubmit.disabled = false;
+    setSubmittingButton(commentSubmit, false, t("send"));
   }
 });
 
 forumTopicForm?.addEventListener("submit", async (event) => {
   event.preventDefault();
+  syncTopicDraftState();
 
   const author = forumAuthorInput.value.trim();
   const title = forumTitleInput.value.trim();
   const text = forumMessageInput.value.trim();
+  const imageFile = forumTopicImageInput?.files?.[0] || null;
   if (!author || !title) return;
+  saveForumUserName();
+  if (hasBlockedForumContent(author, title, text)) {
+    showForumError("Bu mesaj demo için uygun değil.");
+    return;
+  }
+  const imageValidationError = validateForumImage(imageFile);
+  if (imageValidationError) {
+    showForumError(imageValidationError);
+    return;
+  }
 
   const submitButton = forumTopicForm.querySelector("button[type='submit']");
-  submitButton.disabled = true;
+  setSubmittingButton(submitButton, true, t("forumOpenTopic"));
 
   try {
+    let imageId = "";
+    if (imageFile) {
+      try {
+        imageId = await uploadForumImage(imageFile);
+      } catch {
+        showForumError("Resim yüklenemedi.");
+        return;
+      }
+    }
+
     const created = await createForumTopic({
       city: currentCityKey,
       author,
       title,
       text,
+      imageId,
     });
+    topicDraft = { title: "", message: "" };
     forumTopics.unshift(created);
     renderForum();
     forumTitleInput.value = "";
     forumMessageInput.value = "";
+    if (forumTopicImageInput) {
+      forumTopicImageInput.value = "";
+      syncUploadUi(forumTopicImageInput);
+    }
   } catch {
     showForumError("Mesaj gönderilemedi");
   } finally {
@@ -2371,6 +2843,8 @@ forumList?.addEventListener("submit", async (event) => {
   const topicRoot = replyForm.closest(".forum-topic");
   const topicId = topicRoot?.dataset.topicId;
   const input = replyForm.querySelector("input[name='replyText']");
+  const imageInput = replyForm.querySelector("input[name='replyImage']");
+  const imageFile = imageInput?.files?.[0] || null;
   const text = input.value.trim();
   const author = forumAuthorInput.value.trim();
   if (!author) {
@@ -2381,32 +2855,89 @@ forumList?.addEventListener("submit", async (event) => {
   }
   forumAuthorInput.setCustomValidity("");
   if (!topicId || !text) return;
+  saveForumUserName();
+  if (hasBlockedForumContent(author, text)) {
+    showForumError("Bu mesaj demo için uygun değil.");
+    return;
+  }
+  const imageValidationError = validateForumImage(imageFile);
+  if (imageValidationError) {
+    showForumError(imageValidationError);
+    return;
+  }
 
   const submitButton = replyForm.querySelector("button[type='submit']");
-  submitButton.disabled = true;
+  setSubmittingButton(submitButton, true, t("send"));
 
   try {
+    let imageId = "";
+    if (imageFile) {
+      try {
+        imageId = await uploadForumImage(imageFile);
+      } catch {
+        showForumError("Resim yüklenemedi.");
+        return;
+      }
+    }
+
     const result = await createForumReply({
       city: currentCityKey,
       topicId,
       author,
       text,
+      imageId,
     });
+    setReplyDraft(topicId, "");
+    input.value = "";
+    if (imageInput) {
+      imageInput.value = "";
+      syncUploadUi(imageInput);
+    }
     const topic = forumTopics.find((item) => item.id === result.topicId);
     if (topic) {
       topic.messages.push(result.message);
       renderForum();
     }
-    input.value = "";
   } catch {
     showForumError("Mesaj gönderilemedi");
   } finally {
-    submitButton.disabled = false;
+    setSubmittingButton(submitButton, false, t("send"));
   }
 });
 
+forumAuthorInput?.addEventListener("input", saveForumUserName);
+forumTitleInput?.addEventListener("input", syncTopicDraftState);
+forumMessageInput?.addEventListener("input", syncTopicDraftState);
+forumTopicImageInput?.addEventListener("change", () => {
+  syncUploadUi(forumTopicImageInput);
+});
+document.addEventListener("click", (event) => {
+  const clearButton = event.target.closest(".forum-file-clear");
+  if (!clearButton) return;
+  const uploadRoot = clearButton.closest(".forum-upload");
+  const fileInput = uploadRoot?.querySelector("input[type='file']");
+  if (!fileInput) return;
+  fileInput.value = "";
+  syncUploadUi(fileInput);
+});
+forumList?.addEventListener("change", (event) => {
+  const replyImageInput = event.target.closest("input[name='replyImage']");
+  if (!replyImageInput) return;
+  syncUploadUi(replyImageInput);
+});
+forumList?.addEventListener("input", (event) => {
+  const replyInput = event.target.closest("input[name='replyText']");
+  if (!replyInput) return;
+  const topicId = replyInput.closest(".forum-topic")?.dataset.topicId;
+  setReplyDraft(topicId, replyInput.value);
+});
+
 rememberBaseScores();
+setRouteMode(selectedRouteMode);
 applyLanguage();
+refreshUploadLabels(document);
+syncUploadUi(forumTopicImageInput);
+restoreForumUserName();
 setForumCity(destinationSelect.value || "istanbul");
 
 panelToggleButton.addEventListener("click", () => {
@@ -2460,13 +2991,20 @@ routeOverlay?.addEventListener("click", (event) => {
   if (event.target === routeOverlay) closeRouteModal();
 });
 
-routeGenerate?.addEventListener("click", async () => {
-  const mode = routeMode?.value || "safe";
-  routeGenerate.disabled = true;
-  await drawRoute(mode);
-  routeGenerate.disabled = false;
-  closeRouteModal();
+routeModeButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    setRouteMode(button.dataset.routeMode);
+  });
 });
+
+routeGenerate?.addEventListener("click", async () => {
+  setRouteGenerating(true);
+  const created = await drawRoute(selectedRouteMode);
+  setRouteGenerating(false);
+  if (created) closeRouteModal();
+});
+
+
 
 
 

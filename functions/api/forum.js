@@ -13,20 +13,20 @@ const demoForum = {
   izmir: [
     {
       id: "izmir-demo-2026-1",
-      title: "Kordon sahilde aksam yuruyusu",
-      author: "Asli",
+      title: "Kordon sahilde akşam yürüyüşü",
+      author: "Aslı",
       createdAt: 1778461800000,
       messages: [
         {
           id: "izmir-demo-m1",
-          author: "Asli",
-          text: "20:00-22:00 arasi sahil hatti aydinlik ve kalabalik, yuruyus icin uygun.",
+          author: "Aslı",
+          text: "20:00-22:00 arası sahil hattı aydınlık ve kalabalık, yürüyüş için uygun.",
           createdAt: 1778461800000,
         },
         {
           id: "izmir-demo-m2",
           author: "Deniz",
-          text: "Ara sokak yerine ana caddede kalirsan daha konforlu oluyor.",
+          text: "Ara sokak yerine ana caddede kalırsan daha konforlu oluyor.",
           createdAt: 1778465400000,
         },
       ],
@@ -35,20 +35,20 @@ const demoForum = {
   ankara: [
     {
       id: "ankara-demo-2026-1",
-      title: "AOC hafta sonu ulasim notlari",
+      title: "AOC hafta sonu ulaşım notları",
       author: "Bora",
       createdAt: 1778470800000,
       messages: [
         {
           id: "ankara-demo-m1",
           author: "Bora",
-          text: "Hafta sonu oglen saati kalabalik oluyor, sabah gitmek daha rahat.",
+          text: "Hafta sonu öğlen saati kalabalık oluyor, sabah gitmek daha rahat.",
           createdAt: 1778470800000,
         },
         {
           id: "ankara-demo-m2",
-          author: "Ipek",
-          text: "Metrodan sonra kisa yuruyusle ana girise ulasim kolay.",
+          author: "İpek",
+          text: "Metrodan sonra kısa yürüyüşle ana girişe ulaşım kolay.",
           createdAt: 1778474400000,
         },
       ],
@@ -57,20 +57,20 @@ const demoForum = {
   istanbul: [
     {
       id: "istanbul-demo-2026-1",
-      title: "Sultanahmet erken saat plani",
+      title: "Sultanahmet erken saat planı",
       author: "Selin",
       createdAt: 1778481600000,
       messages: [
         {
           id: "istanbul-demo-m1",
           author: "Selin",
-          text: "08:00-10:00 arasi meydan daha sakin, fotograf cekmek icin ideal.",
+          text: "08:00-10:00 arası meydan daha sakin, fotoğraf çekmek için ideal.",
           createdAt: 1778481600000,
         },
         {
           id: "istanbul-demo-m2",
           author: "Kerem",
-          text: "Tramvay cikisindan sonra ana guzergah uzerinden ilerlemek daha guvenli hissettiriyor.",
+          text: "Tramvay çıkışından sonra ana güzergah üzerinden ilerlemek daha güvenli hissettiriyor.",
           createdAt: 1778485200000,
         },
       ],
