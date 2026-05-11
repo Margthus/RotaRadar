@@ -1264,6 +1264,8 @@ function formatForumTime(timestamp) {
   });
 }
 
+const FORUM_STORAGE_KEY = "rotaradar:forum:v2";
+
 async function fetchForum(cityKey) {
   try {
     const response = await fetch(`/api/forum?city=${encodeURIComponent(cityKey)}`, {
@@ -1341,14 +1343,22 @@ const cityData = {
 };
 
 const levelMeta = {
-  safe: { label: "Yeşil - güvenli", color: "#3fa66b", className: "is-safe" },
-  medium: { label: "Sarı - dikkatli", color: "#e5b84c", className: "is-medium" },
-  risky: { label: "Kırmızı - riskli", color: "#df675c", className: "is-risky" },
+  safe: { color: "#3fa66b", className: "is-safe" },
+  medium: { color: "#e5b84c", className: "is-medium" },
+  risky: { color: "#df675c", className: "is-risky" },
 };
+
+function getRiskLabel(level) {
+  if (level === "safe") return t("riskSafe");
+  if (level === "medium") return t("riskMedium");
+  if (level === "risky") return t("riskRisky");
+  return t("mapSelect");
+}
 
 const homeScreen = document.querySelector("#home-screen");
 const chatScreen = document.querySelector("#chat-screen");
 const openChatButton = document.querySelector("#open-chat");
+const languageSelect = document.querySelector("#language-select");
 const chatBackButton = document.querySelector("#chat-back");
 const chatCitySelect = document.querySelector("#chat-city");
 const mapScreen = document.querySelector("#map-screen");
@@ -1386,6 +1396,161 @@ const forumTopicForm = document.querySelector("#forum-topic-form");
 const forumAuthorInput = document.querySelector("#forum-author");
 const forumTitleInput = document.querySelector("#forum-title");
 const forumMessageInput = document.querySelector("#forum-message");
+const homeEyebrow = document.querySelector("#home-eyebrow");
+const homeTitle = document.querySelector("#home-title");
+const homeIntro = document.querySelector("#home-intro");
+const destinationLabel = document.querySelector("#destination-label");
+const destinationPlaceholder = document.querySelector("#destination-placeholder");
+const languageLabel = document.querySelector(".language-switch label");
+const searchSubmitButton = document.querySelector("#search-form button[type='submit']");
+const selectedAreaLabel = document.querySelector("#selected-area-label");
+const areaScoreLabel = document.querySelector("#area-score-label");
+const areaVotesLabel = document.querySelector("#area-votes-label");
+const areaTypeLabel = document.querySelector("#area-type-label");
+const demoRatingLabel = document.querySelector("#demo-rating-label");
+const chatTitle = document.querySelector(".chat-header h2");
+const forumSectionTitle = document.querySelector(".forum-head h3");
+const forumTopicSubmitButton = document.querySelector("#forum-topic-form button[type='submit']");
+
+const I18N = {
+  tr: {
+    langLabel: "Dil",
+    homeEyebrow: "Guvenli rota ve cevre kesfi",
+    homeTitle: "Hos geldin",
+    homeIntro:
+      "Gidecegin yeri yaz, cevredeki turistik alanlari, parklari, kafeleri ve yuruyus rotalarini guvenlik seviyeleriyle birlikte gor.",
+    destinationLabel: "Gitmek istedigin yer",
+    destinationPlaceholder: "Sehir sec",
+    searchHelper: "Demo sehirleri: Izmir, Ankara, Istanbul",
+    searchError: "Devam etmek icin Izmir, Ankara veya Istanbul secmelisin.",
+    openChat: "Foruma git",
+    chatTitle: "Sehir Sohbeti",
+    forumTitle: "Sehir Forumu",
+    forumAuthorPlaceholder: "Ismin",
+    forumTopicPlaceholder: "Konu basligi",
+    forumFirstMessagePlaceholder: "Ilk mesaji yaz",
+    forumOpenTopic: "Konu ac",
+    searchAria: "Haritada goster",
+    panelDetailHide: "Detay gizle",
+    panelDetailShow: "Detay goster",
+    selectedAreaLabel: "Secili bolge",
+    areaSelect: "Bolge sec",
+    mapSelect: "Haritadan sec",
+    areaScoreLabel: "Guven puani",
+    areaVotesLabel: "Kullanici oyu",
+    areaTypeLabel: "Bolge turu",
+    demoRatingLabel: "Demo puani ver",
+    commentPlaceholder: "Yorumunu yaz",
+    send: "Gonder",
+    routeButton: "Nasil giderim",
+    riskSafe: "Yesil - guvenli",
+    riskMedium: "Sari - dikkatli",
+    riskRisky: "Kirmizi - riskli",
+    noAreaComment: "Bu bolge icin henuz yorum yok.",
+    noForumTopic: "Bu sehir icin henuz konu yok.",
+    forumLoadError: "Forum su an yuklenemedi.",
+    replyPlaceholder: "Yanit yaz",
+  },
+  en: {
+    langLabel: "Language",
+    homeEyebrow: "Safe route and area discovery",
+    homeTitle: "Welcome",
+    homeIntro:
+      "Enter your destination and view nearby attractions, parks, cafes, and walking routes with safety levels.",
+    destinationLabel: "Where do you want to go?",
+    destinationPlaceholder: "Select a city",
+    searchHelper: "Demo cities: Izmir, Ankara, Istanbul",
+    searchError: "To continue, select Izmir, Ankara, or Istanbul.",
+    openChat: "Go to forum",
+    chatTitle: "City Chat",
+    forumTitle: "City Forum",
+    forumAuthorPlaceholder: "Your name",
+    forumTopicPlaceholder: "Topic title",
+    forumFirstMessagePlaceholder: "Write the first message",
+    forumOpenTopic: "Open topic",
+    searchAria: "Show on map",
+    panelDetailHide: "Hide details",
+    panelDetailShow: "Show details",
+    selectedAreaLabel: "Selected area",
+    areaSelect: "Select area",
+    mapSelect: "Select on map",
+    areaScoreLabel: "Safety score",
+    areaVotesLabel: "User votes",
+    areaTypeLabel: "Area type",
+    demoRatingLabel: "Rate demo",
+    commentPlaceholder: "Write your comment",
+    send: "Send",
+    routeButton: "How do I get there?",
+    riskSafe: "Green - safe",
+    riskMedium: "Yellow - caution",
+    riskRisky: "Red - risky",
+    noAreaComment: "No comments for this area yet.",
+    noForumTopic: "No topics for this city yet.",
+    forumLoadError: "Forum could not be loaded right now.",
+    replyPlaceholder: "Write a reply",
+  },
+};
+
+function getCurrentLanguage() {
+  const saved = readStorage("rotaradar:lang", "tr");
+  return saved === "en" ? "en" : "tr";
+}
+
+function t(key) {
+  const lang = getCurrentLanguage();
+  return I18N[lang][key] || I18N.tr[key] || key;
+}
+
+function getCityName(cityKey) {
+  const names = {
+    tr: { izmir: "Izmir", ankara: "Ankara", istanbul: "Istanbul" },
+    en: { izmir: "Izmir", ankara: "Ankara", istanbul: "Istanbul" },
+  };
+  const lang = getCurrentLanguage();
+  return names[lang][cityKey] || cityKey;
+}
+
+function applyLanguage() {
+  const lang = getCurrentLanguage();
+  document.documentElement.lang = lang;
+  if (languageSelect) languageSelect.value = lang;
+  if (languageLabel) languageLabel.textContent = t("langLabel");
+  if (homeEyebrow) homeEyebrow.textContent = t("homeEyebrow");
+  if (homeTitle) homeTitle.textContent = t("homeTitle");
+  if (homeIntro) homeIntro.textContent = t("homeIntro");
+  if (destinationLabel) destinationLabel.textContent = t("destinationLabel");
+  if (destinationPlaceholder) destinationPlaceholder.textContent = t("destinationPlaceholder");
+  if (searchHelper) searchHelper.textContent = t("searchHelper");
+  if (openChatButton) openChatButton.textContent = t("openChat");
+  if (chatTitle) chatTitle.textContent = t("chatTitle");
+  if (forumSectionTitle) forumSectionTitle.textContent = t("forumTitle");
+  if (forumAuthorInput) forumAuthorInput.placeholder = t("forumAuthorPlaceholder");
+  if (forumTitleInput) forumTitleInput.placeholder = t("forumTopicPlaceholder");
+  if (forumMessageInput) forumMessageInput.placeholder = t("forumFirstMessagePlaceholder");
+  if (forumTopicSubmitButton) forumTopicSubmitButton.textContent = t("forumOpenTopic");
+  if (searchSubmitButton) searchSubmitButton.setAttribute("aria-label", t("searchAria"));
+  if (selectedAreaLabel) selectedAreaLabel.textContent = t("selectedAreaLabel");
+  if (areaScoreLabel) areaScoreLabel.textContent = t("areaScoreLabel");
+  if (areaVotesLabel) areaVotesLabel.textContent = t("areaVotesLabel");
+  if (areaTypeLabel) areaTypeLabel.textContent = t("areaTypeLabel");
+  if (demoRatingLabel) demoRatingLabel.textContent = t("demoRatingLabel");
+  if (commentInput) commentInput.placeholder = t("commentPlaceholder");
+  if (commentSubmit) commentSubmit.textContent = t("send");
+  if (routeButton) routeButton.textContent = t("routeButton");
+  if (riskPill?.classList.contains("is-neutral")) riskPill.textContent = t("mapSelect");
+  if (!selectedArea && areaName) areaName.textContent = t("areaSelect");
+  const destinationCities = destinationSelect?.querySelectorAll("option[value]");
+  destinationCities?.forEach((option) => {
+    option.textContent = getCityName(option.value);
+  });
+  const chatCities = chatCitySelect?.querySelectorAll("option[value]");
+  chatCities?.forEach((option) => {
+    option.textContent = getCityName(option.value);
+  });
+  if (forumCityLabel) forumCityLabel.textContent = getCityName(currentCityKey);
+  if (cityTitle) cityTitle.textContent = getCityName(currentCityKey);
+  syncPanelToggleLabel();
+}
 
 let map;
 let currentCity = cityData.izmir;
@@ -1393,6 +1558,7 @@ let currentCityKey = "izmir";
 let selectedArea;
 let selectedRating = null;
 let forumTopics = [];
+let forumRefreshTimer = null;
 let regionLayer = L.layerGroup();
 let markerLayer = L.layerGroup();
 let routeLayer = L.layerGroup();
@@ -1496,7 +1662,7 @@ function toBrowserPath(path) {
 
 function syncPanelToggleLabel() {
   const isCollapsed = bottomPanel.classList.contains("is-collapsed");
-  panelToggleButton.textContent = isCollapsed ? "Detay goster" : "Detay gizle";
+  panelToggleButton.textContent = isCollapsed ? t("panelDetailShow") : t("panelDetailHide");
   panelToggleButton.setAttribute("aria-expanded", String(!isCollapsed));
 }
 
@@ -1654,23 +1820,23 @@ function getDemoForum(cityKey) {
   return demos[cityKey] || [];
 }
 
-function getStoredForum(cityKey) {
-  const forum = readStorage("rotaradar:forum", {});
-  return mergeForumTopics(forum[cityKey] || [], getDemoForum(cityKey));
-}
-
-function writeStoredForum(cityKey, topics) {
-  const forum = readStorage("rotaradar:forum", {});
-  forum[cityKey] = topics;
-  writeStorage("rotaradar:forum", forum);
-}
-
 function mergeForumTopics(primary, secondary) {
   const byId = new Map();
   [...primary, ...secondary].forEach((topic) => {
     if (topic?.id && !byId.has(topic.id)) byId.set(topic.id, topic);
   });
   return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt);
+}
+
+function getStoredForum(cityKey) {
+  const forum = readStorage(FORUM_STORAGE_KEY, {});
+  return mergeForumTopics(forum[cityKey] || [], getDemoForum(cityKey));
+}
+
+function writeStoredForum(cityKey, topics) {
+  const forum = readStorage(FORUM_STORAGE_KEY, {});
+  forum[cityKey] = topics;
+  writeStorage(FORUM_STORAGE_KEY, forum);
 }
 
 function buildLocalForumTopic(payload) {
@@ -1692,7 +1858,7 @@ function buildLocalForumTopic(payload) {
 }
 
 function storeLocalForumTopic(cityKey, topic) {
-  const stored = readStorage("rotaradar:forum", {});
+  const stored = readStorage(FORUM_STORAGE_KEY, {});
   const topics = stored[cityKey] || [];
   const next = mergeForumTopics([topic, ...topics], []);
   writeStoredForum(cityKey, next);
@@ -1712,7 +1878,7 @@ function buildLocalForumReply(payload) {
 }
 
 function storeLocalForumReply(cityKey, result) {
-  const stored = readStorage("rotaradar:forum", {});
+  const stored = readStorage(FORUM_STORAGE_KEY, {});
   const storedTopics = stored[cityKey] || [];
   const sourceTopics = mergeForumTopics(storedTopics, forumTopics);
   const targetTopic = sourceTopics.find((topic) => topic.id === result.topicId);
@@ -1733,7 +1899,7 @@ function renderAreaComments(area) {
   const comments = Array.isArray(area.comments) ? area.comments : [];
 
   if (!comments.length) {
-    commentsList.innerHTML = '<p class="forum-meta">Bu bolge icin henuz yorum yok.</p>';
+    commentsList.innerHTML = `<p class="forum-meta">${escapeHtml(t("noAreaComment"))}</p>`;
     return;
   }
 
@@ -1896,7 +2062,7 @@ function renderForum() {
   if (!forumList) return;
 
   if (!forumTopics.length) {
-    forumList.innerHTML = '<p class="forum-meta">Bu sehir icin henuz konu yok.</p>';
+    forumList.innerHTML = `<p class="forum-meta">${escapeHtml(t("noForumTopic"))}</p>`;
     return;
   }
 
@@ -1919,8 +2085,8 @@ function renderForum() {
           <p class="forum-meta">${escapeHtml(topic.author)} · ${formatForumTime(topic.createdAt)}</p>
           <div class="forum-messages">${messagesHtml}</div>
           <form class="forum-reply-form">
-            <input type="text" name="replyText" placeholder="Yanit yaz" maxlength="220" required />
-            <button type="submit">Gonder</button>
+            <input type="text" name="replyText" placeholder="${escapeHtml(t("replyPlaceholder"))}" maxlength="220" required />
+            <button type="submit">${escapeHtml(t("send"))}</button>
           </form>
         </article>`;
     })
@@ -1932,17 +2098,35 @@ async function refreshForum(cityKey) {
     forumTopics = await fetchForum(cityKey);
     renderForum();
   } catch {
-    forumList.innerHTML = '<p class="forum-meta">Forum su an yuklenemedi.</p>';
+    forumList.innerHTML = `<p class="forum-meta">${escapeHtml(t("forumLoadError"))}</p>`;
   }
+}
+
+function startForumAutoRefresh(cityKey) {
+  if (forumRefreshTimer) {
+    window.clearInterval(forumRefreshTimer);
+  }
+
+  forumRefreshTimer = window.setInterval(() => {
+    if (document.hidden) return;
+    const active = document.activeElement;
+    const isTypingInForum =
+      active &&
+      (forumTopicForm?.contains(active) || forumList?.contains(active)) &&
+      (active.tagName === "INPUT" || active.tagName === "TEXTAREA");
+    if (isTypingInForum) return;
+    refreshForum(cityKey);
+  }, 5000);
 }
 
 function setForumCity(cityKey) {
   if (!cityData[cityKey]) return;
   currentCityKey = cityKey;
-  if (forumCityLabel) forumCityLabel.textContent = cityData[cityKey].name;
+  if (forumCityLabel) forumCityLabel.textContent = getCityName(cityKey);
   destinationSelect.value = cityKey;
   if (chatCitySelect) chatCitySelect.value = cityKey;
   refreshForum(cityKey);
+  startForumAutoRefresh(cityKey);
 }
 
 async function openMap(cityKey) {
@@ -1950,7 +2134,7 @@ async function openMap(cityKey) {
   currentCity = cityData[cityKey];
   homeScreen.classList.add("is-hidden");
   mapScreen.classList.remove("is-hidden");
-  cityTitle.textContent = currentCity.name;
+  cityTitle.textContent = getCityName(cityKey);
   await loadCityRatings(cityKey);
 
   afterPaint(() => {
@@ -2061,7 +2245,7 @@ function selectArea(area) {
   const imagePath = areaImageById[area.id] || defaultCityImage[currentCityKey];
   areaImage.setAttribute("src", toBrowserPath(imagePath));
   areaImage.alt = `${area.name} gorseli`;
-  riskPill.textContent = meta.label;
+  riskPill.textContent = getRiskLabel(area.level);
   riskPill.className = `risk-pill ${meta.className}`;
   selectedRating = null;
   ratingButtons.forEach((button) => {
@@ -2093,13 +2277,13 @@ searchForm.addEventListener("submit", async (event) => {
   const cityKey = destinationSelect.value;
 
   if (!cityKey) {
-    searchHelper.textContent = "Devam etmek için İzmir, Ankara veya İstanbul seçmelisin.";
+    searchHelper.textContent = t("searchError");
     searchHelper.classList.add("is-error");
     return;
   }
 
   searchHelper.classList.remove("is-error");
-  searchHelper.textContent = "Demo şehirleri: İzmir, Ankara, İstanbul";
+  searchHelper.textContent = t("searchHelper");
   await openMap(cityKey);
 });
 
@@ -2130,6 +2314,12 @@ chatBackButton?.addEventListener("click", () => {
 chatCitySelect?.addEventListener("change", () => {
   if (!chatCitySelect.value) return;
   setForumCity(chatCitySelect.value);
+});
+
+languageSelect?.addEventListener("change", () => {
+  const lang = languageSelect.value === "en" ? "en" : "tr";
+  writeStorage("rotaradar:lang", lang);
+  applyLanguage();
 });
 
 document.querySelector("#back-button").addEventListener("click", () => {
@@ -2208,6 +2398,7 @@ forumTopicForm?.addEventListener("submit", async (event) => {
     });
     forumTopics.unshift(created);
     renderForum();
+    refreshForum(currentCityKey);
     forumTitleInput.value = "";
     forumMessageInput.value = "";
   } finally {
@@ -2224,7 +2415,14 @@ forumList?.addEventListener("submit", async (event) => {
   const topicId = topicRoot?.dataset.topicId;
   const input = replyForm.querySelector("input[name='replyText']");
   const text = input.value.trim();
-  const author = forumAuthorInput.value.trim() || "Misafir";
+  const author = forumAuthorInput.value.trim();
+  if (!author) {
+    forumAuthorInput.setCustomValidity("Lutfen once isminizi girin.");
+    forumAuthorInput.focus();
+    forumAuthorInput.reportValidity?.();
+    return;
+  }
+  forumAuthorInput.setCustomValidity("");
   if (!topicId || !text) return;
 
   const submitButton = replyForm.querySelector("button[type='submit']");
@@ -2242,6 +2440,7 @@ forumList?.addEventListener("submit", async (event) => {
       topic.messages.push(result.message);
       renderForum();
     }
+    refreshForum(currentCityKey);
   } finally {
     submitButton.disabled = false;
     input.value = "";
@@ -2249,6 +2448,7 @@ forumList?.addEventListener("submit", async (event) => {
 });
 
 rememberBaseScores();
+applyLanguage();
 setForumCity(destinationSelect.value || "istanbul");
 
 panelToggleButton.addEventListener("click", () => {
@@ -2309,3 +2509,4 @@ routeGenerate?.addEventListener("click", async () => {
   routeGenerate.disabled = false;
   closeRouteModal();
 });
+

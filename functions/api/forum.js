@@ -7,119 +7,205 @@ const json = (payload, init = {}) =>
     },
   });
 
+const FORUM_KV_KEY = "forum:topics:v2";
+
 const demoForum = {
   izmir: [
     {
-      id: "izmir-1",
-      title: "Kordon gece guvenligi",
-      author: "Merve",
-      createdAt: 1778271038031,
+      id: "izmir-demo-2026-1",
+      title: "Kordon sahilde aksam yuruyusu",
+      author: "Asli",
+      createdAt: 1778461800000,
       messages: [
         {
-          id: "m1",
-          author: "Merve",
-          text: "Kordon'da 21:00 sonrasi kalabalik nasildi?",
-          createdAt: 1778271038031,
+          id: "izmir-demo-m1",
+          author: "Asli",
+          text: "20:00-22:00 arasi sahil hatti aydinlik ve kalabalik, yuruyus icin uygun.",
+          createdAt: 1778461800000,
         },
         {
-          id: "m2",
-          author: "Ege",
-          text: "Hafta ici genelde rahat, ara sokaklara tek girmemek daha iyi.",
-          createdAt: 1778281838031,
+          id: "izmir-demo-m2",
+          author: "Deniz",
+          text: "Ara sokak yerine ana caddede kalirsan daha konforlu oluyor.",
+          createdAt: 1778465400000,
         },
       ],
     },
   ],
   ankara: [
     {
-      id: "ankara-1",
-      title: "AOC hafta sonu rota onerisi",
-      author: "Can",
-      createdAt: 1778299838031,
+      id: "ankara-demo-2026-1",
+      title: "AOC hafta sonu ulasim notlari",
+      author: "Bora",
+      createdAt: 1778470800000,
       messages: [
         {
-          id: "m1",
-          author: "Can",
-          text: "Ataturk Orman Ciftligi icin en rahat giris neresi?",
-          createdAt: 1778299838031,
+          id: "ankara-demo-m1",
+          author: "Bora",
+          text: "Hafta sonu oglen saati kalabalik oluyor, sabah gitmek daha rahat.",
+          createdAt: 1778470800000,
+        },
+        {
+          id: "ankara-demo-m2",
+          author: "Ipek",
+          text: "Metrodan sonra kisa yuruyusle ana girise ulasim kolay.",
+          createdAt: 1778474400000,
         },
       ],
     },
   ],
   istanbul: [
     {
-      id: "istanbul-1",
-      title: "Sultanahmet bolgesi kalabalik saatler",
-      author: "Burak",
-      createdAt: 1778317838031,
+      id: "istanbul-demo-2026-1",
+      title: "Sultanahmet erken saat plani",
+      author: "Selin",
+      createdAt: 1778481600000,
       messages: [
         {
-          id: "m1",
-          author: "Burak",
-          text: "Sultanahmet'e en sakin saat ne zaman?",
-          createdAt: 1778317838031,
+          id: "istanbul-demo-m1",
+          author: "Selin",
+          text: "08:00-10:00 arasi meydan daha sakin, fotograf cekmek icin ideal.",
+          createdAt: 1778481600000,
         },
         {
-          id: "m2",
-          author: "Elif",
-          text: "08:30-10:00 arasi daha rahat oluyor.",
-          createdAt: 1778321438031,
+          id: "istanbul-demo-m2",
+          author: "Kerem",
+          text: "Tramvay cikisindan sonra ana guzergah uzerinden ilerlemek daha guvenli hissettiriyor.",
+          createdAt: 1778485200000,
         },
       ],
     },
   ],
 };
 
-export async function onRequestGet({ request }) {
-  const url = new URL(request.url);
-  const city = url.searchParams.get("city") || "istanbul";
-
-  return json(demoForum[city] || []);
+function cloneSeed() {
+  return JSON.parse(JSON.stringify(demoForum));
 }
 
-export async function onRequestPost({ request }) {
+function normalizeForumShape(value) {
+  if (!value || typeof value !== "object") return cloneSeed();
+  return {
+    izmir: Array.isArray(value.izmir) ? value.izmir : [],
+    ankara: Array.isArray(value.ankara) ? value.ankara : [],
+    istanbul: Array.isArray(value.istanbul) ? value.istanbul : [],
+  };
+}
+
+function getForumStore() {
+  if (!globalThis.__rotaradarForumStore) {
+    globalThis.__rotaradarForumStore = cloneSeed();
+  }
+  return globalThis.__rotaradarForumStore;
+}
+
+async function readForum(env) {
+  if (env?.FORUM_KV) {
+    const raw = await env.FORUM_KV.get(FORUM_KV_KEY, "json");
+    if (!raw) {
+      const seed = cloneSeed();
+      await env.FORUM_KV.put(FORUM_KV_KEY, JSON.stringify(seed));
+      return seed;
+    }
+    return normalizeForumShape(raw);
+  }
+
+  return normalizeForumShape(getForumStore());
+}
+
+async function writeForum(env, forum) {
+  const normalized = normalizeForumShape(forum);
+  if (env?.FORUM_KV) {
+    await env.FORUM_KV.put(FORUM_KV_KEY, JSON.stringify(normalized));
+    return;
+  }
+  globalThis.__rotaradarForumStore = normalized;
+}
+
+function sortTopics(topics) {
+  return [...topics].sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
+}
+
+function cleanText(value, max = 240) {
+  return String(value || "")
+    .trim()
+    .slice(0, max);
+}
+
+export async function onRequestGet({ request, env }) {
+  const url = new URL(request.url);
+  const city = url.searchParams.get("city") || "istanbul";
+  const forum = await readForum(env);
+
+  return json(sortTopics(forum[city] || []));
+}
+
+export async function onRequestPost({ request, env }) {
   const body = await request.json().catch(() => ({}));
   const city = typeof body.city === "string" ? body.city : "istanbul";
+  if (!["izmir", "ankara", "istanbul"].includes(city)) {
+    return json({ error: "Invalid city" }, { status: 400 });
+  }
+
+  const forum = await readForum(env);
+  const topics = Array.isArray(forum[city]) ? forum[city] : [];
   const now = Date.now();
 
   if (body.action === "reply") {
-    if (!body.topicId || !body.author || !body.text) {
+    const topicId = cleanText(body.topicId, 120);
+    const author = cleanText(body.author, 60);
+    const text = cleanText(body.text, 240);
+    if (!topicId || !author || !text) {
       return json({ error: "Invalid reply payload" }, { status: 400 });
     }
 
-    return json(
-      {
-        topicId: body.topicId,
-        message: {
-          id: `m-${now}`,
-          author: String(body.author).trim(),
-          text: String(body.text).trim(),
-          createdAt: now,
-        },
-      },
-      { status: 201 },
-    );
+    const topicIndex = topics.findIndex((topic) => topic.id === topicId);
+    if (topicIndex < 0) {
+      return json({ error: "Topic not found" }, { status: 404 });
+    }
+
+    const message = {
+      id: `m-${now}`,
+      author,
+      text,
+      createdAt: now,
+    };
+
+    const target = topics[topicIndex];
+    const nextTopic = {
+      ...target,
+      messages: [...(Array.isArray(target.messages) ? target.messages : []), message].slice(-120),
+    };
+    topics[topicIndex] = nextTopic;
+    forum[city] = sortTopics(topics);
+    await writeForum(env, forum);
+
+    return json({ topicId, message }, { status: 201 });
   }
 
-  if (!body.title || !body.author || !body.text) {
+  const title = cleanText(body.title, 120);
+  const author = cleanText(body.author, 60);
+  const text = cleanText(body.text, 240);
+  if (!title || !author || !text) {
     return json({ error: "Invalid topic payload" }, { status: 400 });
   }
 
-  return json(
-    {
-      id: `${city}-${now}`,
-      title: String(body.title).trim(),
-      author: String(body.author).trim(),
-      createdAt: now,
-      messages: [
-        {
-          id: `m-${now}`,
-          author: String(body.author).trim(),
-          text: String(body.text).trim(),
-          createdAt: now,
-        },
-      ],
-    },
-    { status: 201 },
-  );
+  const created = {
+    id: `${city}-${now}`,
+    title,
+    author,
+    createdAt: now,
+    messages: [
+      {
+        id: `m-${now}`,
+        author,
+        text,
+        createdAt: now,
+      },
+    ],
+  };
+
+  forum[city] = sortTopics([created, ...topics]).slice(0, 200);
+  await writeForum(env, forum);
+
+  return json(created, { status: 201 });
 }
