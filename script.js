@@ -1,4 +1,4 @@
-const toLeafletPoints = (coordinates) => coordinates.map(([lng, lat]) => [lat, lng]);
+﻿const toLeafletPoints = (coordinates) => coordinates.map(([lng, lat]) => [lat, lng]);
 
 const izmirDemoAreas = [
   {
@@ -2243,6 +2243,10 @@ function selectArea(area) {
   areaVotes.textContent = area.votes.toLocaleString("tr-TR");
   areaType.textContent = area.type;
   const imagePath = areaImageById[area.id] || defaultCityImage[currentCityKey];
+  areaImage.onerror = () => {
+    areaImage.onerror = null;
+    areaImage.src = toBrowserPath(defaultCityImage[currentCityKey]);
+  };
   areaImage.setAttribute("src", toBrowserPath(imagePath));
   areaImage.alt = `${area.name} gorseli`;
   riskPill.textContent = getRiskLabel(area.level);
@@ -2509,4 +2513,5 @@ routeGenerate?.addEventListener("click", async () => {
   routeGenerate.disabled = false;
   closeRouteModal();
 });
+
 
