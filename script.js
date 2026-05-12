@@ -1427,6 +1427,24 @@ const levelMeta = {
   risky: { color: "#df675c", className: "is-risky" },
 };
 
+const CITY_ROUTE_START_POINTS = {
+  istanbul: {
+    lat: 41.0082,
+    lng: 28.9784,
+    label: "İstanbul Merkez",
+  },
+  ankara: {
+    lat: 39.9334,
+    lng: 32.8597,
+    label: "Ankara Merkez",
+  },
+  izmir: {
+    lat: 38.4237,
+    lng: 27.1428,
+    label: "İzmir Merkez",
+  },
+};
+
 function getRiskLabel(level) {
   if (level === "safe") return t("riskSafe");
   if (level === "medium") return t("riskMedium");
@@ -1457,6 +1475,7 @@ const commentInput = document.querySelector("#comment-input");
 const commentSubmit = document.querySelector("#comment-submit");
 const commentsList = document.querySelector("#comments-list");
 const bottomPanel = document.querySelector(".bottom-panel");
+const detailSheetBody = document.querySelector("#detail-sheet-body");
 const panelToggleButton = document.querySelector("#panel-toggle");
 const emergencyButton = document.querySelector(".emergency-button");
 const emergencyOverlay = document.querySelector("#emergency-overlay");
@@ -1533,7 +1552,7 @@ const I18N = {
     routeSafest: "En güvenli",
     routeGenerate: "Rota oluştur",
     routeCalculating: "Rota hesaplanıyor...",
-    routeStartNote: "Başlangıç: Harita merkezi",
+    routeStartNote: "Başlangıç: Şehir merkezi",
     routeStartError: "Başlangıç konumu alınamadı.",
     routeCreateError: "Rota oluşturulamadı.",
     routeFallbackSafe: "Güvenli rota oluşturulamadı, en hızlı rota gösteriliyor.",
@@ -1589,7 +1608,7 @@ const I18N = {
     routeSafest: "Safest",
     routeGenerate: "Create route",
     routeCalculating: "Calculating route...",
-    routeStartNote: "Start: Map center",
+    routeStartNote: "Start: City center",
     routeStartError: "Starting location could not be determined.",
     routeCreateError: "Route could not be created.",
     routeFallbackSafe: "Safe route could not be created, showing the fastest route instead.",
@@ -1659,7 +1678,7 @@ function applyLanguage() {
   if (routeButton) routeButton.textContent = t("routeButton");
   if (routeTitle) routeTitle.textContent = t("routeTitle");
   if (routeModeLabel) routeModeLabel.textContent = t("routeModeLabel");
-  if (routeStartNote) routeStartNote.textContent = t("routeStartNote");
+  syncRouteStartNote();
   routeModeButtons.forEach((button) => {
     button.textContent = t(button.dataset.routeMode === "safest" ? "routeSafest" : "routeFastest");
   });
@@ -1798,6 +1817,10 @@ function syncPanelToggleLabel() {
   const isCollapsed = bottomPanel.classList.contains("is-collapsed");
   panelToggleButton.textContent = isCollapsed ? t("panelDetailShow") : t("panelDetailHide");
   panelToggleButton.setAttribute("aria-expanded", String(!isCollapsed));
+}
+
+function resetDetailSheetScroll() {
+  if (detailSheetBody) detailSheetBody.scrollTop = 0;
 }
 
 function getDemoCommentsForArea(area) {
@@ -2023,20 +2046,29 @@ function setRouteGenerating(isGenerating) {
   routeGenerate.textContent = isGenerating ? t("routeCalculating") : t("routeGenerate");
 }
 
+function syncRouteStartNote() {
+  if (!routeStartNote) return;
+  const routeStartPoint = CITY_ROUTE_START_POINTS[currentCityKey];
+  routeStartNote.textContent = routeStartPoint
+    ? `Başlangıç: ${routeStartPoint.label}`
+    : t("routeStartNote");
+}
+
 function getRouteDisplayMeta(mode) {
   if (mode === "safest") return { color: "#2f9b63", label: t("routeSafest") };
   return { color: "#1d5f78", label: t("routeFastest") };
 }
 
-function getMapCenterRouteStart() {
-  if (!map?.getCenter) throw new Error(t("routeStartError"));
-  const center = map.getCenter();
-  if (!Number.isFinite(center?.lat) || !Number.isFinite(center?.lng)) {
+function getCityRouteStartPoint(cityKey = currentCityKey) {
+  const routeStartPoint = CITY_ROUTE_START_POINTS[cityKey];
+  if (!routeStartPoint) {
     throw new Error(t("routeStartError"));
   }
+
   return {
-    latLng: [center.lat, center.lng],
-    coordinate: [center.lng, center.lat],
+    latLng: [routeStartPoint.lat, routeStartPoint.lng],
+    coordinate: [routeStartPoint.lng, routeStartPoint.lat],
+    label: routeStartPoint.label,
   };
 }
 
@@ -2137,7 +2169,7 @@ async function drawRoute(mode) {
 
   let start;
   try {
-    start = getMapCenterRouteStart();
+    start = getCityRouteStartPoint(currentCityKey);
   } catch (error) {
     if (routeFeedback) routeFeedback.textContent = error.message || t("routeStartError");
     routeLayer.clearLayers();
@@ -2169,7 +2201,7 @@ async function drawRoute(mode) {
       routeFeedback.textContent = `${getRouteDisplayMeta(requestedMode).label} • ${formatRouteMetrics(result.distance, result.duration)}`;
     }
     if (routeSummary) {
-      routeSummary.textContent = `${t("routeStartNote")} • ${formatRouteMetrics(result.distance, result.duration)}`;
+      routeSummary.textContent = `Başlangıç: ${start.label} • ${formatRouteMetrics(result.distance, result.duration)}`;
     }
     return true;
   } catch (error) {
@@ -2192,7 +2224,7 @@ async function drawRoute(mode) {
         routeFeedback.textContent = `${t("routeFallbackSafe")} ${formatRouteMetrics(fallback.distance, fallback.duration)}`;
       }
       if (routeSummary) {
-        routeSummary.textContent = `${t("routeFallbackSafe")} ${formatRouteMetrics(fallback.distance, fallback.duration)}`;
+        routeSummary.textContent = `Başlangıç: ${start.label} • ${formatRouteMetrics(fallback.distance, fallback.duration)}`;
       }
       return true;
     } catch {
@@ -2517,6 +2549,7 @@ function setForumCity(cityKey) {
   const roomId = normalizeForumRoomId(cityKey);
   if (!cityData[roomId]) return;
   currentCityKey = roomId;
+  syncRouteStartNote();
   if (forumCityLabel) forumCityLabel.textContent = getCityName(roomId);
   destinationSelect.value = roomId;
   if (chatCitySelect) chatCitySelect.value = roomId;
@@ -2527,6 +2560,7 @@ function setForumCity(cityKey) {
 async function openMap(cityKey) {
   currentCityKey = cityKey;
   currentCity = cityData[cityKey];
+  syncRouteStartNote();
   homeScreen.classList.add("is-hidden");
   mapScreen.classList.remove("is-hidden");
   cityTitle.textContent = getCityName(cityKey);
@@ -2630,6 +2664,7 @@ function selectArea(area) {
     bottomPanel.classList.remove("is-collapsed");
     syncPanelToggleLabel();
   }
+  resetDetailSheetScroll();
 
   selectedArea = area;
   const meta = levelMeta[area.level];
@@ -2941,7 +2976,9 @@ restoreForumUserName();
 setForumCity(destinationSelect.value || "istanbul");
 
 panelToggleButton.addEventListener("click", () => {
+  const willOpen = bottomPanel.classList.contains("is-collapsed");
   bottomPanel.classList.toggle("is-collapsed");
+  if (willOpen) resetDetailSheetScroll();
   syncPanelToggleLabel();
 });
 

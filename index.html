@@ -197,42 +197,46 @@
         </div>
 
         <aside class="bottom-panel">
-          <div class="handle" aria-hidden="true"></div>
-          <div class="panel-toggle-row">
-            <button type="button" class="panel-toggle" id="panel-toggle" aria-expanded="true">Detay gizle</button>
-          </div>
-          <div class="panel-summary">
-            <div>
-              <p id="selected-area-label">Seçili bölge</p>
-              <h3 id="area-name">Bölge seç</h3>
-            </div>
-            <span class="risk-pill is-neutral" id="risk-pill">Haritadan seç</span>
-          </div>
-          <div class="area-media"><img id="area-image" alt="Seçili bölge görseli" /></div>
-          <p class="area-description" id="area-description"></p>
-          <div class="stats-grid">
-            <div><span id="area-score">-</span><p id="area-score-label">Güven puanı</p></div>
-            <div><span id="area-votes">-</span><p id="area-votes-label">Kullanıcı oyu</p></div>
-            <div><span id="area-type">-</span><p id="area-type-label">Bölge türü</p></div>
-          </div>
-          <div class="rating-box">
-            <p id="demo-rating-label">Bölgeyi değerlendir</p>
-            <div class="rating-buttons" id="rating-buttons" aria-label="Güvenlik puanı ver">
-              <button type="button" data-rating="1">1</button>
-              <button type="button" data-rating="2">2</button>
-              <button type="button" data-rating="3">3</button>
-              <button type="button" data-rating="4">4</button>
-              <button type="button" data-rating="5">5</button>
+          <div class="detail-sheet-header">
+            <div class="handle" aria-hidden="true"></div>
+            <div class="panel-toggle-row">
+              <button type="button" class="panel-toggle" id="panel-toggle" aria-expanded="true">Detay gizle</button>
             </div>
           </div>
-          <div class="comment-box">
-            <textarea id="comment-input" rows="2" maxlength="300" placeholder="Yorumunu yaz"></textarea>
-            <button type="button" id="comment-submit">Gönder</button>
-          </div>
-          <div class="comments-list" id="comments-list"></div>
-          <div class="route-box">
-            <button type="button" id="route-button">Nasıl giderim</button>
-            <p class="route-summary" id="route-summary"></p>
+          <div class="detail-sheet-body" id="detail-sheet-body">
+            <div class="panel-summary">
+              <div>
+                <p id="selected-area-label">Seçili bölge</p>
+                <h3 id="area-name">Bölge seç</h3>
+              </div>
+              <span class="risk-pill is-neutral" id="risk-pill">Haritadan seç</span>
+            </div>
+            <div class="area-media"><img id="area-image" alt="Seçili bölge görseli" /></div>
+            <p class="area-description" id="area-description"></p>
+            <div class="stats-grid">
+              <div><span id="area-score">-</span><p id="area-score-label">Güven puanı</p></div>
+              <div><span id="area-votes">-</span><p id="area-votes-label">Kullanıcı oyu</p></div>
+              <div><span id="area-type">-</span><p id="area-type-label">Bölge türü</p></div>
+            </div>
+            <div class="rating-box">
+              <p id="demo-rating-label">Bölgeyi değerlendir</p>
+              <div class="rating-buttons" id="rating-buttons" aria-label="Güvenlik puanı ver">
+                <button type="button" data-rating="1">1</button>
+                <button type="button" data-rating="2">2</button>
+                <button type="button" data-rating="3">3</button>
+                <button type="button" data-rating="4">4</button>
+                <button type="button" data-rating="5">5</button>
+              </div>
+            </div>
+            <div class="comment-box">
+              <textarea id="comment-input" rows="2" maxlength="300" placeholder="Yorumunu yaz"></textarea>
+              <button type="button" id="comment-submit">Gönder</button>
+            </div>
+            <div class="comments-list" id="comments-list"></div>
+            <div class="route-box">
+              <button type="button" id="route-button">Nasıl giderim</button>
+              <p class="route-summary" id="route-summary"></p>
+            </div>
           </div>
         </aside>
       </section>
