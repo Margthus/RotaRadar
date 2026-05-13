@@ -929,6 +929,23 @@ const istanbulDemoAreas = [
     ]),
   },
   {
+    id: "maltepe-cevresi",
+    name: "Maltepe Çevresi",
+    type: "Merkez",
+    level: "risky",
+    score: 2.3,
+    votes: 94,
+    description:
+      "Maltepe çevresindeki bu demo alanı, yoğun trafik akışı ve dikkat gerektiren geçişleri vurgulamak için riskli olarak işaretlendi.",
+    points: toLeafletPoints([
+      [28.8938, 41.0268], [28.8968, 41.0348], [28.9048, 41.0402],
+      [28.9158, 41.0419], [28.9269, 41.0392], [28.9342, 41.0321],
+      [28.9361, 41.0229], [28.9331, 41.0158], [28.9256, 41.0107],
+      [28.9142, 41.0092], [28.9038, 41.0118], [28.8965, 41.0182],
+      [28.8938, 41.0268],
+    ]),
+  },
+  {
     id: "emirgan-korusu",
     name: "Emirgan Korusu",
     type: "Park",
@@ -1442,6 +1459,21 @@ const CITY_ROUTE_START_POINTS = {
     lat: 38.4237,
     lng: 27.1428,
     label: "İzmir Merkez",
+  },
+};
+
+const DEMO_ROUTE_SCENARIOS = {
+  istanbul: {
+    startAreaId: "karabayir",
+    endAreaId: "topkapi-sarayi",
+  },
+  ankara: {
+    startAreaId: "dikmen-vadisi",
+    endAreaId: "ankara-kalesi-muzeler",
+  },
+  izmir: {
+    startAreaId: "kibris-sehitleri",
+    endAreaId: "tarihi-asansor",
   },
 };
 
@@ -2046,12 +2078,47 @@ function setRouteGenerating(isGenerating) {
   routeGenerate.textContent = isGenerating ? t("routeCalculating") : t("routeGenerate");
 }
 
+function getAreaById(cityKey, areaId) {
+  return cityData[cityKey]?.areas?.find((area) => area.id === areaId) || null;
+}
+
+function getDemoRouteScenario(cityKey = currentCityKey) {
+  const scenario = DEMO_ROUTE_SCENARIOS[cityKey];
+  const startArea = scenario ? getAreaById(cityKey, scenario.startAreaId) : null;
+  const endArea = scenario ? getAreaById(cityKey, scenario.endAreaId) : null;
+  const viaAreas = Array.isArray(scenario?.viaAreaIds)
+    ? scenario.viaAreaIds.map((areaId) => getAreaById(cityKey, areaId)).filter(Boolean)
+    : [];
+
+  if (!startArea || !endArea) {
+    throw new Error(t("routeStartError"));
+  }
+
+  const startLatLng = getAreaCenter(startArea);
+  const endLatLng = getAreaCenter(endArea);
+  const viaLatLngs = viaAreas.map((area) => getAreaCenter(area));
+
+  return {
+    startArea,
+    endArea,
+    viaAreas,
+    startLatLng,
+    endLatLng,
+    viaLatLngs,
+    startCoordinate: toRouteCoordinate(startLatLng),
+    endCoordinate: toRouteCoordinate(endLatLng),
+    viaCoordinates: viaLatLngs.map(toRouteCoordinate),
+    label: `Demo senaryo: ${startArea.name} → ${endArea.name}`,
+  };
+}
+
 function syncRouteStartNote() {
   if (!routeStartNote) return;
-  const routeStartPoint = CITY_ROUTE_START_POINTS[currentCityKey];
-  routeStartNote.textContent = routeStartPoint
-    ? `Başlangıç: ${routeStartPoint.label}`
-    : t("routeStartNote");
+  try {
+    routeStartNote.textContent = getDemoRouteScenario(currentCityKey).label;
+  } catch {
+    routeStartNote.textContent = t("routeStartNote");
+  }
 }
 
 function getRouteDisplayMeta(mode) {
@@ -2096,16 +2163,16 @@ function estimateAreaFootprint(area) {
   return (Math.max(...lats) - Math.min(...lats)) * (Math.max(...lngs) - Math.min(...lngs));
 }
 
-function buildAvoidPolygonsForRoute(area, startLatLng, endLatLng) {
+function getAvoidAreasForRoute(area, startLatLng, endLatLng) {
   const midpoint = [
     (startLatLng[0] + endLatLng[0]) / 2,
     (startLatLng[1] + endLatLng[1]) / 2,
   ];
 
-  const polygons = currentCity.areas
+  return currentCity.areas
     .filter((candidate) => candidate.id !== area.id)
     .filter((candidate) => candidate.level === "risky" || candidate.level === "medium")
-    .filter((candidate) => estimateAreaFootprint(candidate) < 0.03)
+    .filter((candidate) => candidate.level === "risky" || estimateAreaFootprint(candidate) < 0.03)
     .map((candidate) => {
       const center = getAreaCenter(candidate);
       const riskWeight = candidate.level === "risky" ? 0 : 1;
@@ -2124,7 +2191,11 @@ function buildAvoidPolygonsForRoute(area, startLatLng, endLatLng) {
       if (first.riskWeight !== second.riskWeight) return first.riskWeight - second.riskWeight;
       return first.proximity - second.proximity;
     })
-    .slice(0, 8)
+    .slice(0, 8);
+}
+
+function buildAvoidPolygonsForRoute(area, startLatLng, endLatLng) {
+  const polygons = getAvoidAreasForRoute(area, startLatLng, endLatLng)
     .map(({ candidate }) => buildAreaPolygonRing(candidate))
     .filter(Boolean)
     .map((ring) => [ring]);
@@ -2135,6 +2206,41 @@ function buildAvoidPolygonsForRoute(area, startLatLng, endLatLng) {
     type: "MultiPolygon",
     coordinates: polygons,
   };
+}
+
+function buildSafestDetourWaypoints(area, startLatLng, endLatLng) {
+  const primaryRiskArea = getAvoidAreasForRoute(area, startLatLng, endLatLng)
+    .find(({ candidate }) => candidate.level === "risky")
+    ?.candidate;
+
+  if (!primaryRiskArea) return [];
+
+  const lats = primaryRiskArea.points.map(([lat]) => lat);
+  const lngs = primaryRiskArea.points.map(([, lng]) => lng);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+  const centerLng = (minLng + maxLng) / 2;
+  const centerLat = (minLat + maxLat) / 2;
+  const buffer = 0.006;
+
+  const northDetour = [maxLat + buffer, centerLng];
+  const southDetour = [minLat - buffer, centerLng];
+  const eastDetour = [centerLat, maxLng + buffer];
+  const westDetour = [centerLat, minLng - buffer];
+
+  const detourCandidates = [northDetour, southDetour, eastDetour, westDetour]
+    .map((latLng) => ({
+      latLng,
+      score:
+        distanceBetweenPoints(startLatLng, latLng)
+        + distanceBetweenPoints(latLng, endLatLng),
+    }))
+    .sort((first, second) => first.score - second.score);
+
+  const bestDetour = detourCandidates[0]?.latLng;
+  return bestDetour ? [toRouteCoordinate(bestDetour)] : [];
 }
 
 function drawRouteOnMap(routeGeoJson, mode, startLatLng, endLatLng) {
@@ -2167,41 +2273,43 @@ function formatRouteMetrics(distanceMeters, durationSeconds) {
 async function drawRoute(mode) {
   if (!selectedArea) return false;
 
-  let start;
+  let scenario;
   try {
-    start = getCityRouteStartPoint(currentCityKey);
+    scenario = getDemoRouteScenario(currentCityKey);
   } catch (error) {
     if (routeFeedback) routeFeedback.textContent = error.message || t("routeStartError");
     routeLayer.clearLayers();
     return false;
   }
 
-  const endLatLng = getAreaCenter(selectedArea);
-  const end = toRouteCoordinate(endLatLng);
   routeLayer.clearLayers();
   if (routeSummary) routeSummary.textContent = "";
   if (routeFeedback) routeFeedback.textContent = t("routeCalculating");
 
   const requestedMode = mode === "safest" ? "safest" : "fastest";
   const avoidPolygons = requestedMode === "safest"
-    ? buildAvoidPolygonsForRoute(selectedArea, start.latLng, endLatLng)
+    ? buildAvoidPolygonsForRoute(scenario.endArea, scenario.startLatLng, scenario.endLatLng)
     : null;
+  const routeWaypoints = requestedMode === "safest"
+    ? [...buildSafestDetourWaypoints(scenario.endArea, scenario.startLatLng, scenario.endLatLng), ...scenario.viaCoordinates]
+    : scenario.viaCoordinates;
 
   try {
     const result = await calculateSafeRoute({
-      start: start.coordinate,
-      end,
+      start: scenario.startCoordinate,
+      end: scenario.endCoordinate,
+      waypoints: routeWaypoints,
       mode: requestedMode,
       profile: "foot-walking",
       avoidPolygons,
     });
 
-    drawRouteOnMap(result.routeGeoJson, requestedMode, start.latLng, endLatLng);
+    drawRouteOnMap(result.routeGeoJson, requestedMode, scenario.startLatLng, scenario.endLatLng);
     if (routeFeedback) {
       routeFeedback.textContent = `${getRouteDisplayMeta(requestedMode).label} • ${formatRouteMetrics(result.distance, result.duration)}`;
     }
     if (routeSummary) {
-      routeSummary.textContent = `Başlangıç: ${start.label} • ${formatRouteMetrics(result.distance, result.duration)}`;
+      routeSummary.textContent = `${scenario.label} • ${formatRouteMetrics(result.distance, result.duration)}`;
     }
     return true;
   } catch (error) {
@@ -2212,19 +2320,20 @@ async function drawRoute(mode) {
 
     try {
       const fallback = await calculateSafeRoute({
-        start: start.coordinate,
-        end,
+        start: scenario.startCoordinate,
+        end: scenario.endCoordinate,
+        waypoints: scenario.viaCoordinates,
         mode: "fastest",
         profile: "foot-walking",
         avoidPolygons: null,
       });
 
-      drawRouteOnMap(fallback.routeGeoJson, "fastest", start.latLng, endLatLng);
+      drawRouteOnMap(fallback.routeGeoJson, "fastest", scenario.startLatLng, scenario.endLatLng);
       if (routeFeedback) {
         routeFeedback.textContent = `${t("routeFallbackSafe")} ${formatRouteMetrics(fallback.distance, fallback.duration)}`;
       }
       if (routeSummary) {
-        routeSummary.textContent = `Başlangıç: ${start.label} • ${formatRouteMetrics(fallback.distance, fallback.duration)}`;
+        routeSummary.textContent = `${scenario.label} • ${formatRouteMetrics(fallback.distance, fallback.duration)}`;
       }
       return true;
     } catch {

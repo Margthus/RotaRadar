@@ -8,6 +8,11 @@ const isCoordinatePair = (value) =>
   && value.length === 2
   && value.every((item) => Number.isFinite(Number(item)));
 
+const normalizeWaypoints = (value) =>
+  Array.isArray(value)
+    ? value.filter(isCoordinatePair).map((pair) => pair.map(Number))
+    : [];
+
 const normalizeProfile = (value) => {
   if (value === "driving-car") return "driving-car";
   return "foot-walking";
@@ -36,6 +41,7 @@ export default async ({ req, res, log, error }) => {
   const {
     start,
     end,
+    waypoints = [],
     mode,
     profile = "foot-walking",
     avoidPolygons = null,
@@ -45,13 +51,19 @@ export default async ({ req, res, log, error }) => {
     return json(res, { error: "Rota oluşturulamadı." }, 400);
   }
 
+  const normalizedWaypoints = normalizeWaypoints(waypoints);
+
   const requestBody = {
-    coordinates: [start.map(Number), end.map(Number)],
+    coordinates: [start.map(Number), ...normalizedWaypoints, end.map(Number)],
     instructions: false,
+    options: {
+      avoid_features: ["ferries"],
+    },
   };
 
   if (mode === "safest" && avoidPolygons) {
     requestBody.options = {
+      ...requestBody.options,
       avoid_polygons: avoidPolygons,
     };
   }

@@ -13,6 +13,7 @@ function parseExecutionBody(execution) {
 export async function calculateSafeRoute({
   start,
   end,
+  waypoints = [],
   mode,
   profile = "foot-walking",
   avoidPolygons = null,
@@ -20,6 +21,7 @@ export async function calculateSafeRoute({
   const body = JSON.stringify({
     start,
     end,
+    waypoints,
     mode,
     profile,
     avoidPolygons,
