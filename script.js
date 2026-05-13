@@ -1466,6 +1466,7 @@ const DEMO_ROUTE_SCENARIOS = {
   istanbul: {
     startAreaId: "karabayir",
     endAreaId: "topkapi-sarayi",
+    safestViaAreaIds: ["yedikule", "sultanahmet"],
   },
   ankara: {
     startAreaId: "dikmen-vadisi",
@@ -2089,6 +2090,9 @@ function getDemoRouteScenario(cityKey = currentCityKey) {
   const viaAreas = Array.isArray(scenario?.viaAreaIds)
     ? scenario.viaAreaIds.map((areaId) => getAreaById(cityKey, areaId)).filter(Boolean)
     : [];
+  const safestViaAreas = Array.isArray(scenario?.safestViaAreaIds)
+    ? scenario.safestViaAreaIds.map((areaId) => getAreaById(cityKey, areaId)).filter(Boolean)
+    : [];
 
   if (!startArea || !endArea) {
     throw new Error(t("routeStartError"));
@@ -2097,17 +2101,21 @@ function getDemoRouteScenario(cityKey = currentCityKey) {
   const startLatLng = getAreaCenter(startArea);
   const endLatLng = getAreaCenter(endArea);
   const viaLatLngs = viaAreas.map((area) => getAreaCenter(area));
+  const safestViaLatLngs = safestViaAreas.map((area) => getAreaCenter(area));
 
   return {
     startArea,
     endArea,
     viaAreas,
+    safestViaAreas,
     startLatLng,
     endLatLng,
     viaLatLngs,
+    safestViaLatLngs,
     startCoordinate: toRouteCoordinate(startLatLng),
     endCoordinate: toRouteCoordinate(endLatLng),
     viaCoordinates: viaLatLngs.map(toRouteCoordinate),
+    safestViaCoordinates: safestViaLatLngs.map(toRouteCoordinate),
     label: `Demo senaryo: ${startArea.name} → ${endArea.name}`,
   };
 }
@@ -2172,6 +2180,8 @@ function getAvoidAreasForRoute(area, startLatLng, endLatLng) {
   return currentCity.areas
     .filter((candidate) => candidate.id !== area.id)
     .filter((candidate) => candidate.level === "risky" || candidate.level === "medium")
+    .filter((candidate) => !isPointInsideArea(startLatLng, candidate.points))
+    .filter((candidate) => !isPointInsideArea(endLatLng, candidate.points))
     .filter((candidate) => candidate.level === "risky" || estimateAreaFootprint(candidate) < 0.03)
     .map((candidate) => {
       const center = getAreaCenter(candidate);
@@ -2290,9 +2300,10 @@ async function drawRoute(mode) {
   const avoidPolygons = requestedMode === "safest"
     ? buildAvoidPolygonsForRoute(scenario.endArea, scenario.startLatLng, scenario.endLatLng)
     : null;
-  const routeWaypoints = requestedMode === "safest"
-    ? [...buildSafestDetourWaypoints(scenario.endArea, scenario.startLatLng, scenario.endLatLng), ...scenario.viaCoordinates]
-    : scenario.viaCoordinates;
+  const safestWaypoints = scenario.safestViaCoordinates.length
+    ? scenario.safestViaCoordinates
+    : [...buildSafestDetourWaypoints(scenario.endArea, scenario.startLatLng, scenario.endLatLng), ...scenario.viaCoordinates];
+  const routeWaypoints = requestedMode === "safest" ? safestWaypoints : scenario.viaCoordinates;
 
   try {
     const result = await calculateSafeRoute({
